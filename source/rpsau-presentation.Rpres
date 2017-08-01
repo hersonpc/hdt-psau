@@ -1,0 +1,78 @@
+Análise Estatística PSAU
+========================================================
+author: Herson Melo
+date: `r format(Sys.Date(), "%d de %B de %Y")`
+autosize: true
+font-import: https://fonts.googleapis.com/css?family=Ubuntu
+font-family: 'Ubuntu'
+
+```{r loading, echo=FALSE, message=FALSE, results='hide'}
+source("./rpsau.R")
+```
+
+Apresentação
+========================================================
+
+### **Hospital de Doenças Tropicais Dr. Anuar Auad**
+
+Análise estatística dos dados coletados na pesquisa de satisfação 
+dos usuários, realizadas no hospital no período `r months_full[min(pesquisas$p1$mes)]`~`r months_full[max(pesquisas$p1$mes)]` de `r min(pesquisas$p1$ano)`.
+
+```{r, echo=FALSE,results='asis', fig.width=8,fig.height=5,dpi=600,out.width="1000px",out.height="600px"}
+for(selAno in unique(pesquisas$p1_medias$ano)) { 
+  #print(paste('*', selAno))
+
+  tmp <- pesquisas$p1_medias %>% filter(ano == selAno)
+  for(selMes in unique(tmp$mes)) { 
+    #print(paste('## Extratificando dados de ', selAno, '/', selMes))
+    #print(head(tmp))
+
+    cat(paste0(selMes, "/", selAno, "\n"))
+    cat("========================================================\n")
+    cat("Consolidação dos resultados por setor<br>\n")
+    # Criando agrupamentos de dados
+    tmp_periodo_geral <- pesquisas$p1_medias %>% filter(ano == selAno & mes == selMes) %>% select(m_a:m_h)
+    tmp_periodo_amb <- pesquisas$p2_medias %>% filter(ano == selAno & mes == selMes) %>% select(m)
+
+    # Totalizando os agrupamentos por colunas
+    tmp_consolidado_geral <- tmp_periodo_geral %>% colMeans(na.rm=T) * 100 / 4
+    tmp_consolidado_amb <- tmp_periodo_amb %>% colMeans(na.rm=T) * 100 / 4
+    
+    # Unificando dados do ambulatório
+    tmp_consolidado_geral[["m_y"]] <- tmp_consolidado_amb
+    
+    # Consolidando média de avaliação geral
+    tmp_consolidado_geral[["m_geral"]] <- tmp_consolidado_geral %>% sapply(as.numeric) %>% mean(na.rm = TRUE)
+    
+    nome_medidas <- c("Recepção", "Médico", "Enfermagem", "Serviço Social", "Pscicologia", 
+                  "Nutrição", "Reabilitação", "Infraestrutura", "Ambulatório", "Geral")
+    names(tmp_consolidado_geral) <- nome_medidas
+    
+    resumo_mes <- melt(tmp_consolidado_geral, variable.name = "medida", value.name = "percentual")
+    resumo_mes <- cbind(medida = rownames(resumo_mes), resumo_mes)
+    rownames(resumo_mes) <- NULL
+    resumo_mes$medida <- factor(resumo_mes$medida, levels = unique(nome_medidas))
+    
+    #print(resumo_mes)
+
+    p1 <- ggplot(resumo_mes, aes(x=medida, y=percentual)) +
+      geom_bar(stat = "identity", fill = c(rep("#4b76bc", each=9), "#d63924")) +
+      geom_text(aes(label = paste0(round(percentual, 2), '%')), vjust = -0.7) +
+      coord_cartesian(ylim = c(0, 100)) +
+      geom_hline(aes(yintercept=80), colour="#990000", linetype="dashed") + 
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      labs(title = paste0("Avaliação do grau de satisfação dos usuários - ", selMes, "/", selAno), 
+           subtitle = "Hospital de Doenças Tropicais Dr. Anuar Auad", 
+           #caption = paste("Pesquisa realizada com", nrow(resumo2), "pessoas."),
+           x = "",
+           y = "% de satisfação")
+    
+    #print(resumo_mes)
+    print(p1)
+    cat("\n")
+    
+  }
+}
+```
+

@@ -1,0 +1,243 @@
+---
+title: "Pesquisa de Satisfacao dos Usuarios"
+author: "Herson Melo"
+date: '`r format(Sys.Date(), "%d de %B de %Y")`'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(reshape2)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(knitr)
+library(scales)
+library(xlsx)
+```
+
+```{r loading, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+source("./rpsau-data.R")
+```
+
+
+```{r funcoes, echo=FALSE, message=FALSE, warning=FALSE, results='hide', fig.height=5, fig.width=10}
+consolidacoes <- function(selAno, selMes) {
+# Criando agrupamentos de dados
+    tmp_periodo_geral <- pesquisas$p1_medias %>% filter(ano == selAno & mes == selMes) %>% select(m_a:m_h)
+    tmp_periodo_amb <- pesquisas$p2_medias %>% filter(ano == selAno & mes == selMes) %>% select(m)
+
+    # Totalizando os agrupamentos por colunas
+    tmp_consolidado_geral <- tmp_periodo_geral %>% colMeans(na.rm=T) * 100 / 4
+    tmp_consolidado_amb <- tmp_periodo_amb %>% colMeans(na.rm=T) * 100 / 4
+    
+    # Unificando dados do ambulatório
+    tmp_consolidado_geral[["m_y"]] <- tmp_consolidado_amb
+    
+    # Consolidando média de avaliação geral
+    tmp_consolidado_geral[["m_geral"]] <- tmp_consolidado_geral %>% sapply(as.numeric) %>% mean(na.rm = TRUE)
+    
+    nome_medidas <- c("Recepção", "Médico", "Enfermagem", "Serviço Social", "Pscicologia", 
+                  "Nutrição", "Reabilitação", "Infraestrutura", "Ambulatório", "Geral")
+    names(tmp_consolidado_geral) <- nome_medidas
+    
+    resumo_mes <- melt(tmp_consolidado_geral, variable.name = "medida", value.name = "percentual")
+    resumo_mes <- cbind(medida = rownames(resumo_mes), resumo_mes)
+    rownames(resumo_mes) <- NULL
+    resumo_mes$medida <- factor(resumo_mes$medida, levels = unique(nome_medidas))
+    
+    #print(resumo_mes)
+
+    p1 <- ggplot(resumo_mes, aes(x=medida, y=percentual)) +
+      geom_bar(stat = "identity", fill = c(rep("#4b76bc", each=9), "#d63924")) +
+      geom_text(aes(label = paste0(round(percentual, 2), '%')), vjust = -0.7) +
+      coord_cartesian(ylim = c(0, 100)) +
+      geom_hline(aes(yintercept=80), colour="#990000", linetype="dashed") + 
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      labs(title = paste0("Avaliação do grau de satisfação dos usuários - ", selMes, "/", selAno), 
+           subtitle = "Hospital de Doenças Tropicais Dr. Anuar Auad", 
+           #caption = paste("Pesquisa realizada com", nrow(resumo2), "pessoas."),
+           x = "",
+           y = "Frequencia relativa")
+    
+    #print(resumo_mes)
+    print(p1)
+
+    # Preparando pasta para imagens
+    dir.create(file.path(getwd(), 'imgs', selAno, selMes), recursive = T, showWarnings = FALSE)
+    
+    png(file.path(getwd(), 'imgs', selAno, selMes, "plot01.png"), 
+        height=4, width=8, units = 'in', res = 300)
+    print(p1)
+    dev.off()
+    
+    
+    ###
+    ## Consolidando Quantidade de Ruim, Regular, Bom e Otimos
+    ###
+    
+    # Pesquisa Geral
+    a <- pesquisas$p1 %>% filter(year(data) == selAno & mes_consolidacao == selMes) %>% select(a_1:h_7)
+    b <- a %>% lapply(table) %>% lapply(as.data.frame) %>% Map(cbind, var = names(a),.) %>% bind_rows() %>% dcast(var ~ Var1)
+    #message(names(b))
+    names(b)[names(b) == "var"] <- "x"
+    names(b)[names(b) == "1"] <- "Ruim"
+    names(b)[names(b) == "2"] <- "Regular"
+    names(b)[names(b) == "3"] <- "Bom"
+    names(b)[names(b) == "4"] <- "Otimo"
+    #names(b) <- c("x", "Ruim", "Regular", "Bom", "Otimo")
+    c <- b %>% select(2:length(names(b))) %>% colSums(na.rm=T) %>% melt
+    c <- as.data.frame(cbind(avaliacao = rownames(c), freq = c$value))
+    
+    # Presquisa Ambulatorial
+    a2 <- pesquisas$p2 %>% filter(year(data) == selAno & mes_consolidacao == selMes) %>% select(recepcao:medico)
+    b2 <- a2 %>% lapply(table) %>% lapply(as.data.frame) %>% Map(cbind, var = names(a2),.) %>% bind_rows() %>% dcast(var ~ Var1)
+    names(b2)[names(b2) == "var"] <- "x"
+    names(b2)[names(b2) == "1"] <- "Ruim"
+    names(b2)[names(b2) == "2"] <- "Regular"
+    names(b2)[names(b2) == "3"] <- "Bom"
+    names(b2)[names(b2) == "4"] <- "Otimo"
+    #names(b2) <- c("x", "Ruim", "Regular", "Bom", "Otimo")
+    c2 <- b2 %>% select(2:length(names(b2))) %>% colSums(na.rm=T) %>% melt
+    c2 <- as.data.frame(cbind(avaliacao = rownames(c2), freq = c2$value))
+    
+    # Junção das pesquisas
+    d <- merge(c, c2, by = "avaliacao") %>% 
+      mutate(freq.x = as.numeric(as.character(freq.x)),
+             freq.y = as.numeric(as.character(freq.y)),
+             fr.x = (freq.x / sum(freq.x)) * 100,
+             fr.y = (freq.y / sum(freq.y)) * 100,
+             freq = freq.x + freq.y,
+             fr = (freq / sum(freq)) * 100)
+
+    #d <- c %>% mutate(freq = as.numeric(as.character(c$freq)), fr = (freq / sum(freq)) *100 )
+    
+    pie(d$fr, 
+        labels = paste0(round(d$fr,2), '% ', d$avaliacao), 
+        col = c("#71b777", "#2d9636", "#E69F00", "#b54a42"),
+        main = paste0("Distribuição geral das avaliações - ", selMes, "/", selAno))
+    png(file.path(getwd(), 'imgs', selAno, selMes, "plot02.png"), 
+        height=4, width=6, units = 'in', res = 300)
+    pie(d$fr, 
+        labels = paste0(round(d$fr,2), '% ', d$avaliacao), 
+        col = c("#71b777", "#2d9636", "#E69F00", "#b54a42"),
+        main = paste0("Distribuição geral das avaliações - ", selMes, "/", selAno))
+    dev.off()
+    
+    #layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
+    #pie(d$fr, labels = paste0(round(d$fr,2), '% ', d$avaliacao), main = "Distribuição geral das avaliações")
+    #pie(d$fr.x, labels = paste0(round(d$fr.x,2), '% ', d$avaliacao), main = "Formulario Institucional")
+    #pie(d$fr.y, labels = paste0(round(d$fr.y,2), '% ', d$avaliacao), main = "Formulario Ambulatorio")
+    #par(mfrow=c(1,1))
+    
+    
+    
+    ###
+    ## Estatisticas por setor    
+    ###
+    
+    s <- pesquisas$p1 %>% 
+      filter(year(data) == selAno & mes_consolidacao == selMes) %>% 
+      select(setor, m_x) %>% 
+      group_by(setor) %>% 
+      summarise(qtde = n())
+    s$setor <- as.character(s$setor)
+    if(!is.na(s[s$setor == 'Ambulatório', 2])) {
+      s[s$setor == 'Ambulatório', 2] <- s[s$setor == 'Ambulatório', 2] + nrow(pesquisas$p2 %>% 
+        filter(year(data) == selAno & mes_consolidacao == selMes))
+    } else {
+      s <-  rbind(s, data.frame(
+                'setor' = c('Ambulatório'),
+                'qtde' = nrow(pesquisas$p2 %>% filter(year(data) == selAno & mes_consolidacao == selMes))
+              )
+            )
+    }
+    s[is.na(s$setor),1] <- "Não informado"
+    s <- s[order(s$qtde, decreasing = T),]
+    s$setor <- factor(s$setor, levels = s$setor)
+    
+    p2 <- ggplot(s, aes(x=setor, y=qtde)) + 
+      geom_bar(stat = "identity", fill='#4c74b5') + 
+      geom_text(aes(label = qtde), vjust = -0.7) +
+      coord_cartesian(ylim = c(0, max(s$qtde) * 1.1)) +
+      theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      labs(title = paste0("Distribuição de origem dos formulários - ", selMes, "/", selAno), 
+           subtitle = "Hospital de Doenças Tropicais Dr. Anuar Auad", 
+           #caption = paste("Pesquisa realizada com", nrow(resumo2), "pessoas."),
+           x = "",
+           y = "N. de formulários respondidos")
+    
+    print(p2)  
+    png(file.path(getwd(), 'imgs', selAno, selMes, "plot03.png"), 
+        height=4, width=8, units = 'in', res = 300)
+    print(p2)  
+    dev.off()
+}
+```
+
+
+## Estatísticas da amostra
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+
+# Preparando pasta global para as imagens
+dir.create(file.path(getwd(), 'imgs'), showWarnings = FALSE)
+
+for(selAno in unique(pesquisas$p1$ano)) { 
+  #print(paste('*', selAno))
+  tmp <- pesquisas$p1 %>% filter(ano == selAno)
+  for(selMes in unique(tmp$mes)) { 
+    Sys.sleep(0.1)
+    
+    # Convertento o mes literal em seu indice inteiro...
+    selMesInt <- which(selMes == months_full)[1]
+
+    cat('\n')
+    cat(paste0('## ', months_full[selMes], '/', selAno, '\n'))
+
+    q1a <- table(pesquisas$p1 %>% 
+                 filter(ano == selAno & mes == selMesInt) %>% 
+                 select(a_1:h_7) %>% 
+                 rowMeans(na.rm=T) %>% 
+                 ceiling) %>% 
+            melt
+    q1b <- table(pesquisas$p2 %>% 
+                 filter(ano == selAno & mes == selMesInt) %>% 
+                 select(recepcao, medico) %>% 
+                 rowMeans(na.rm=T) %>% 
+                 ceiling) %>% 
+            melt
+    q1 <- merge(q1a, q1b, by="Var1") %>% 
+          mutate(total = value.x + value.y) %>% 
+          filter(Var1 >= 3) %>% # selecionando ótimos(4) e bons(3)
+          colSums()
+    
+    t <- data.frame(
+          Indicadores = c("QUANTIDADE DE AVALIAÇÕES ENTRE BOM E ÓTIMO NA PESQUISA DE SATISFAÇÃO",
+                          "TOTAL DE PESSOAS PESQUISADAS NA PESQUISA DE SATISFAÇÃO",
+                          "ÍNDICE DE SATISFAÇÃO DA CLIENTELA"
+                        ),
+          Resultados = c(as.numeric(q1['total']), 
+                         nrow(pesquisas$p1) + nrow(pesquisas$p2),
+                         0
+                        )
+        )
+    names(t) <- c(paste0('Indicadores - ', months_full[selMes], '/', selAno), "Resultados")
+    
+    print(kable(t))
+    #kable(t)
+    cat('\n')
+    cat('### Consolidação da análise estatística dos dados da pesquisa.\n')
+    
+    consolidacoes(selAno, months_full[selMes])
+  }
+}
+```
+
+
+

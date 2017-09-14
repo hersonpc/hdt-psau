@@ -10,9 +10,9 @@ months_full <- c("Janeiro","Fevereiro","Março","Abril","Maio","Junho",
 
 
 
-###
+###============================================================================
 ## Bibliotecas necessárias
-###
+###============================================================================
 
 suppressWarnings(suppressPackageStartupMessages(library(reshape2)))
 suppressWarnings(suppressPackageStartupMessages(library(dplyr)))
@@ -24,9 +24,9 @@ suppressWarnings(suppressPackageStartupMessages(library(xlsx)))
 
 
 
-###
+###============================================================================
 ## Funções para ajustes
-###
+###============================================================================
 
 ajusta_criterios <- function (field) {
   field <- tolower(iconv(as.character(field), to = "ASCII//TRANSLIT"))
@@ -43,9 +43,9 @@ ajusta_criterios <- function (field) {
 
 
 
-###
+###============================================================================
 ## Funções para normatização dos dados das pesquisas
-###
+###============================================================================
 
 normatizar_pesquisa_geral <- function(pesquisa) {
   message('* Normatizando pesquisa geral...')
@@ -65,15 +65,15 @@ normatizar_pesquisa_geral <- function(pesquisa) {
                           "mes_consolidacao", "id")
   
   pesquisa$id <- as.numeric(pesquisa$id)
-  pesquisa$nome <- iconv(as.character(pesquisa$nome), "UTF-8", "ISO_8859-2")
-  pesquisa$contato <- iconv(as.character(pesquisa$contato), "UTF-8", "ISO_8859-2")
-  pesquisa$autorizo <- tolower(iconv(as.character(pesquisa$autorizo), "UTF-8", "ISO_8859-2"))
+  pesquisa$nome <- iconv(as.character(pesquisa$nome), to = "ISO_8859-2")
+  pesquisa$contato <- iconv(as.character(pesquisa$contato), to = "ISO_8859-2")
+  pesquisa$autorizo <- tolower(iconv(as.character(pesquisa$autorizo), to = "ISO_8859-2"))
   
   pesquisa$mes_consolidacao <- factor(as.character(pesquisa$mes_consolidacao), levels = months_full)
   pesquisa$data <- dmy_hms(pesquisa$data)
   pesquisa$data_internacao <- dmy(pesquisa$data_internacao)
   pesquisa$data_alta <- dmy(pesquisa$data_alta)
-  pesquisa$setor <- as.factor(iconv(as.character(pesquisa$setor), "UTF-8", "ISO_8859-2"))
+  pesquisa$setor <- as.factor(iconv(as.character(pesquisa$setor), to = "ISO_8859-2"))
   
   pesquisa$a_1 <- ajusta_criterios(pesquisa$a_1)
   pesquisa$a_2 <- ajusta_criterios(pesquisa$a_2)
@@ -121,9 +121,9 @@ normatizar_pesquisa_geral <- function(pesquisa) {
 
   pesquisa$m_x <- pesquisa %>% select(m_a:m_h) %>% rowMeans(na.rm = T)  
   
-  pesquisa$elogios <- iconv(as.character(pesquisa$elogios), "UTF-8", "ISO_8859-2")
-  pesquisa$sugestoes <- iconv(as.character(pesquisa$sugestoes), "UTF-8", "ISO_8859-2")
-  pesquisa$reclamacoes <- iconv(as.character(pesquisa$reclamacoes), "UTF-8", "ISO_8859-2")
+  pesquisa$elogios <- iconv(as.character(pesquisa$elogios), to = "ISO_8859-2")
+  pesquisa$sugestoes <- iconv(as.character(pesquisa$sugestoes), to = "ISO_8859-2")
+  pesquisa$reclamacoes <- iconv(as.character(pesquisa$reclamacoes), to = "ISO_8859-2")
   
 
   pesquisa <- pesquisa %>% 
@@ -147,17 +147,17 @@ normatizar_pesquisa_ambulatorio <- function(pesquisa) {
   pesquisa$id <- as.numeric(pesquisa$id)
   pesquisa$data <- dmy_hms(pesquisa$data)
   pesquisa$mes_consolidacao <- factor(as.character(pesquisa$mes_consolidacao), levels = months_full)
-  pesquisa$nome <- iconv(as.character(pesquisa$nome), "UTF-8", "ISO_8859-2")
-  pesquisa$contato <- iconv(as.character(pesquisa$contato), "UTF-8", "ISO_8859-2")
+  pesquisa$nome <- iconv(as.character(pesquisa$nome), to = "ISO_8859-2")
+  pesquisa$contato <- iconv(as.character(pesquisa$contato), to = "ISO_8859-2")
                             
   pesquisa$recepcao <- ajusta_criterios(pesquisa$recepcao)
   pesquisa$medico <- ajusta_criterios(pesquisa$medico)
   
   pesquisa$m <- pesquisa %>% select(recepcao:medico) %>% rowMeans(na.rm=T)
   
-  pesquisa$elogios <- iconv(as.character(pesquisa$elogios), "UTF-8", "ISO_8859-2")
-  pesquisa$sugestoes <- iconv(as.character(pesquisa$sugestoes), "UTF-8", "ISO_8859-2")
-  pesquisa$reclamacoes <- iconv(as.character(pesquisa$reclamacoes), "UTF-8", "ISO_8859-2")
+  pesquisa$elogios <- iconv(as.character(pesquisa$elogios), to = "ISO_8859-2")
+  pesquisa$sugestoes <- iconv(as.character(pesquisa$sugestoes), to = "ISO_8859-2")
+  pesquisa$reclamacoes <- iconv(as.character(pesquisa$reclamacoes), to = "ISO_8859-2")
   
   pesquisa <- pesquisa %>% 
     mutate(ano = year(data), 
@@ -170,9 +170,9 @@ normatizar_pesquisa_ambulatorio <- function(pesquisa) {
 
 
 
-###
+###============================================================================
 ## Função de importação dos dados
-###
+###============================================================================
 
 importar_dados_psau <- function() {
   message('Importando dados das pesquisas do PSAU...')
@@ -203,14 +203,16 @@ importar_dados_psau <- function() {
   return( list("p1" = tbl_df(pesq.geral), 
                "p1_medias" = tbl_df(pesq.geral %>% select(ano, mes = mes_consolidacao, m_a:m_x)),
                "p2" = tbl_df(pesq.ambulatorio),
-               "p2_medias" = tbl_df(pesq.ambulatorio %>% select(ano, mes = mes_consolidacao, recepcao:medico, m))) )
+               "p2_medias" = tbl_df(pesq.ambulatorio %>% select(ano, mes = mes_consolidacao, recepcao:medico, m))
+               ) 
+          )
 }
 
 
 
-###
+###============================================================================
 ## Execução do tratamento das informações
-###
+###============================================================================
 
 pesquisas <- importar_dados_psau();
 

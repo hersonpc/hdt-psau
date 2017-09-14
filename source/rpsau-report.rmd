@@ -21,6 +21,8 @@ library(xlsx)
 
 ```{r loading, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
 source("./rpsau-data.R")
+
+trim <- function (x) gsub("^\\s+|\\s+$", "", x)
 ```
 
 
@@ -178,65 +180,104 @@ consolidacoes <- function(selAno, selMes) {
     print(p2)  
     dev.off()
 }
+main <- function() {
+
+  # Preparando pasta global para as imagens
+  dir.create(file.path(getwd(), 'imgs'), showWarnings = FALSE)
+  
+  # Preparando pasta global para os arquivos de exportação
+  dir.create(file.path(getwd(), 'files'), showWarnings = FALSE)
+  
+  for(selAno in unique(pesquisas$p1$ano)) { 
+    #print(paste('*', selAno))
+    tmp <- pesquisas$p1 %>% filter(ano == selAno)
+    for(selMes in unique(tmp$mes_consolidacao)) { 
+      Sys.sleep(0.1)
+      str(selMes)
+      message(paste0('Loop ', selMes))
+      
+      # Convertento o mes literal em seu indice inteiro...
+      selMesInt <- which(selMes == months_full)[1]
+  
+      cat('\n')
+      cat(paste0('## ', selMes, '/', selAno, '\n'))
+  
+      # filtrando os dados do periodo em questão (ano e mes)
+      #dados.do.periodo.p1 <- pesquisas$p1 %>% filter(ano == selAno & mes == selMesInt)
+      #dados.do.periodo.p2 <- pesquisas$p2 %>% filter(ano == selAno & mes == selMesInt)
+      dados.do.periodo.p1 <- pesquisas$p1 %>% filter(ano == selAno & mes_consolidacao == selMes)
+      dados.do.periodo.p2 <- pesquisas$p2 %>% filter(ano == selAno & mes_consolidacao == selMes)
+      
+      grupo_elogios <- c(unique(dados.do.periodo.p1$elogios), unique(dados.do.periodo.p2$elogios)) %>%
+                        trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
+      grupo_sugestoes <- c(unique(dados.do.periodo.p1$sugestoes), unique(dados.do.periodo.p2$sugestoes)) %>%
+                        trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
+      grupo_reclamacoes <- c(unique(dados.do.periodo.p1$reclamacoes), unique(dados.do.periodo.p2$reclamacoes)) %>%
+                        trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
+      dir.create(file.path(getwd(), 'files', paste0(selAno, "-", selMesInt)), recursive = TRUE, showWarnings = FALSE)
+      write.xlsx(x = grupo_elogios,
+                 sheetName = "Elogios",
+                 file = file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
+                                  paste0(selAno, "-", selMes, "_elogios.xlsx"))
+                )
+      write.xlsx(x = grupo_sugestoes,
+                 sheetName = "Sugestoes",
+                 file = file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
+                                  paste0(selAno, "-", selMes, "_sugestoes.xlsx"))
+                )
+      write.xlsx(x = grupo_reclamacoes,
+                 sheetName = "Reclamacoes",
+                 file = file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
+                                  paste0(selAno, "-", selMes, "_reclamacoes.xlsx"))
+                )
+      
+      # calculando os total de cada grupo de pergunta
+      q1a <- table(dados.do.periodo.p1 %>% 
+                   select(a_1:h_7) %>% 
+                   rowMeans(na.rm=T) %>% 
+                   ceiling) %>% 
+              melt
+      q1b <- table(dados.do.periodo.p2 %>% 
+                   select(recepcao, medico) %>% 
+                   rowMeans(na.rm=T) %>% 
+                   ceiling) %>% 
+              melt
+      
+      # unindo as avaliações
+      q1 <- merge(q1a, q1b, by="Var1") %>% 
+            mutate(total = value.x + value.y) %>% 
+            filter(Var1 >= 3) %>% # selecionando ótimos(4) e bons(3)
+            colSums()
+      
+      t <- data.frame(
+            Indicadores = c("QUANTIDADE DE AVALIAÇÕES ENTRE BOM E ÓTIMO NA PESQUISA DE SATISFAÇÃO",
+                            "TOTAL DE PESSOAS PESQUISADAS NA PESQUISA DE SATISFAÇÃO",
+                            "ÍNDICE DE SATISFAÇÃO DA CLIENTELA"
+                          ),
+            Resultados = c(as.numeric(q1['total']), 
+                           nrow(dados.do.periodo.p1) + nrow(dados.do.periodo.p2),
+                           0
+                          )
+          )
+      names(t) <- c(paste0('Indicadores - ', selMes, '/', selAno), "Resultados")
+      
+      print(kable(t))
+      #kable(t)
+      cat('\n')
+      cat('### Consolidação da análise estatística dos dados da pesquisa.\n')
+      
+      consolidacoes(selAno, selMes)
+    }
+  }  
+  
+}
 ```
 
 
 ## Estatísticas da amostra
 
 ```{r, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
-
-# Preparando pasta global para as imagens
-dir.create(file.path(getwd(), 'imgs'), showWarnings = FALSE)
-
-for(selAno in unique(pesquisas$p1$ano)) { 
-  #print(paste('*', selAno))
-  tmp <- pesquisas$p1 %>% filter(ano == selAno)
-  for(selMes in unique(tmp$mes)) { 
-    Sys.sleep(0.1)
-    
-    # Convertento o mes literal em seu indice inteiro...
-    selMesInt <- which(selMes == months_full)[1]
-
-    cat('\n')
-    cat(paste0('## ', months_full[selMes], '/', selAno, '\n'))
-
-    q1a <- table(pesquisas$p1 %>% 
-                 filter(ano == selAno & mes == selMesInt) %>% 
-                 select(a_1:h_7) %>% 
-                 rowMeans(na.rm=T) %>% 
-                 ceiling) %>% 
-            melt
-    q1b <- table(pesquisas$p2 %>% 
-                 filter(ano == selAno & mes == selMesInt) %>% 
-                 select(recepcao, medico) %>% 
-                 rowMeans(na.rm=T) %>% 
-                 ceiling) %>% 
-            melt
-    q1 <- merge(q1a, q1b, by="Var1") %>% 
-          mutate(total = value.x + value.y) %>% 
-          filter(Var1 >= 3) %>% # selecionando ótimos(4) e bons(3)
-          colSums()
-    
-    t <- data.frame(
-          Indicadores = c("QUANTIDADE DE AVALIAÇÕES ENTRE BOM E ÓTIMO NA PESQUISA DE SATISFAÇÃO",
-                          "TOTAL DE PESSOAS PESQUISADAS NA PESQUISA DE SATISFAÇÃO",
-                          "ÍNDICE DE SATISFAÇÃO DA CLIENTELA"
-                        ),
-          Resultados = c(as.numeric(q1['total']), 
-                         nrow(pesquisas$p1) + nrow(pesquisas$p2),
-                         0
-                        )
-        )
-    names(t) <- c(paste0('Indicadores - ', months_full[selMes], '/', selAno), "Resultados")
-    
-    print(kable(t))
-    #kable(t)
-    cat('\n')
-    cat('### Consolidação da análise estatística dos dados da pesquisa.\n')
-    
-    consolidacoes(selAno, months_full[selMes])
-  }
-}
+main()
 ```
 
 

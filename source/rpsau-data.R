@@ -20,7 +20,7 @@ suppressWarnings(suppressPackageStartupMessages(library(lubridate)))
 suppressWarnings(suppressPackageStartupMessages(library(ggplot2)))
 suppressWarnings(suppressPackageStartupMessages(library(knitr)))
 suppressWarnings(suppressPackageStartupMessages(library(scales)))
-suppressWarnings(suppressPackageStartupMessages(library(xlsx)))
+#suppressWarnings(suppressPackageStartupMessages(library(xlsx)))
 
 
 
@@ -62,7 +62,7 @@ normatizar_pesquisa_geral <- function(pesquisa) {
                           "g_1", "g_2", "g_3", 
                           "h_1", "h_2", "h_3", "h_4", "h_5", "h_6", "h_7", 
                           "elogios", "sugestoes", "reclamacoes", 
-                          "mes_consolidacao", "id")
+                          "mes_consolidacao", "id", "ano_consolidacao")
   
   pesquisa$id <- as.numeric(pesquisa$id)
   pesquisa$nome <- iconv(as.character(pesquisa$nome), to = "ISO_8859-2")
@@ -141,7 +141,8 @@ normatizar_pesquisa_ambulatorio <- function(pesquisa) {
   message('* Normatizando pesquisa ambulatorio...')
   
   # renomeando campos
-  colnames(pesquisa) <- c("data", "nome", "contato", "recepcao", "medico", "elogios", "reclamacoes", "sugestoes", "id", "mes_consolidacao")
+  colnames(pesquisa) <- c("data", "nome", "contato", "recepcao", "medico", "elogios", 
+                          "reclamacoes", "sugestoes", "id", "mes_consolidacao", "atendente", "ano_consolidacao")
   
   # ajustando propriedades
   pesquisa$id <- as.numeric(pesquisa$id)
@@ -217,3 +218,4 @@ importar_dados_psau <- function() {
 pesquisas <- importar_dados_psau();
 
 #str(pesquisas$p1)
+

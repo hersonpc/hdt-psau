@@ -17,6 +17,7 @@ library(ggplot2)
 library(knitr)
 library(scales)
 library(xlsx)
+library(gridExtra)
 ```
 
 ```{r loading, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
@@ -28,7 +29,10 @@ trim <- function (x) gsub("^\\s+|\\s+$", "", x)
 
 ```{r funcoes, echo=FALSE, message=FALSE, warning=FALSE, results='hide', fig.height=5, fig.width=10}
 consolidacoes <- function(selAno, selMes) {
-# Criando agrupamentos de dados
+  
+    message(paste0('      -- Consolidacao ', selAno, '/', selMes))
+  
+    # Criando agrupamentos de dados
     tmp_periodo_geral <- pesquisas$p1_medias %>% filter(ano == selAno & mes == selMes) %>% select(m_a:m_h)
     tmp_periodo_amb <- pesquisas$p2_medias %>% filter(ano == selAno & mes == selMes) %>% select(m)
 
@@ -129,6 +133,7 @@ consolidacoes <- function(selAno, selMes) {
         col = c("#71b777", "#2d9636", "#E69F00", "#b54a42"),
         main = paste0("Distribuição geral das avaliações - ", selMes, "/", selAno))
     dev.off()
+    #print(kable(d))
     
     #layout(matrix(c(1,1,2,3), 2, 2, byrow = TRUE))
     #pie(d$fr, labels = paste0(round(d$fr,2), '% ', d$avaliacao), main = "Distribuição geral das avaliações")
@@ -188,11 +193,13 @@ main <- function() {
   # Preparando pasta global para os arquivos de exportação
   dir.create(file.path(getwd(), 'files'), showWarnings = FALSE)
   
-  for(selAno in unique(pesquisas$p1$ano)) { 
+  for(selAno in unique(pesquisas$p1$ano_consolidacao)) { 
     #print(paste('*', selAno))
-    tmp <- pesquisas$p1 %>% filter(ano == selAno)
-    for(selMes in unique(tmp$mes_consolidacao)) { 
+    tmp <- pesquisas$p1 %>% filter(ano_consolidacao == selAno)
+    for(selMes in unique(tmp$mes_consolidacao)) {
       Sys.sleep(0.1)
+      # if(selMes == "Dezembro")
+      #   next
       str(selMes)
       message(paste0('Loop ', selMes))
       
@@ -205,8 +212,8 @@ main <- function() {
       # filtrando os dados do periodo em questão (ano e mes)
       #dados.do.periodo.p1 <- pesquisas$p1 %>% filter(ano == selAno & mes == selMesInt)
       #dados.do.periodo.p2 <- pesquisas$p2 %>% filter(ano == selAno & mes == selMesInt)
-      dados.do.periodo.p1 <- pesquisas$p1 %>% filter(ano == selAno & mes_consolidacao == selMes)
-      dados.do.periodo.p2 <- pesquisas$p2 %>% filter(ano == selAno & mes_consolidacao == selMes)
+      dados.do.periodo.p1 <- pesquisas$p1 %>% filter(ano_consolidacao == selAno & mes_consolidacao == selMes)
+      dados.do.periodo.p2 <- pesquisas$p2 %>% filter(ano_consolidacao == selAno & mes_consolidacao == selMes)
       
       grupo_elogios <- c(unique(dados.do.periodo.p1$elogios), unique(dados.do.periodo.p2$elogios)) %>%
                         trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
@@ -215,21 +222,39 @@ main <- function() {
       grupo_reclamacoes <- c(unique(dados.do.periodo.p1$reclamacoes), unique(dados.do.periodo.p2$reclamacoes)) %>%
                         trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
       dir.create(file.path(getwd(), 'files', paste0(selAno, "-", selMesInt)), recursive = TRUE, showWarnings = FALSE)
-      write.xlsx(x = grupo_elogios,
-                 sheetName = "Elogios",
-                 file = file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
-                                  paste0(selAno, "-", selMes, "_elogios.xlsx"))
-                )
-      write.xlsx(x = grupo_sugestoes,
+      if(nrow(grupo_elogios) > 0) {
+          message(paste0('    --> output: ', file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
+                                                   paste0(selAno, "-", selMes, "_elogios.xlsx"))))
+          write.xlsx(x = grupo_elogios,
+                   sheetName = "Elogios",
+                   file = file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
+                                    paste0(selAno, "-", selMes, "_elogios.xlsx"))
+                  )
+      } else {
+        message('    --> sem registro de elogios para exportar')
+      }
+      if(nrow(grupo_sugestoes) > 0) {
+          message(paste0('    --> output: ', file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
+                                                   paste0(selAno, "-", selMes, "_sugestoes.xlsx"))))
+          write.xlsx(x = grupo_sugestoes,
                  sheetName = "Sugestoes",
                  file = file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
                                   paste0(selAno, "-", selMes, "_sugestoes.xlsx"))
                 )
-      write.xlsx(x = grupo_reclamacoes,
+      } else {
+        message('    --> sem registro de sugestoes para exportar')
+      }
+      if(nrow(grupo_reclamacoes) > 0) {
+          message(paste0('    --> output: ', file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
+                                                   paste0(selAno, "-", selMes, "_reclamacoes.xlsx"))))
+          write.xlsx(x = grupo_reclamacoes,
                  sheetName = "Reclamacoes",
                  file = file.path(getwd(), 'files', paste0(selAno, "-", selMesInt),
                                   paste0(selAno, "-", selMes, "_reclamacoes.xlsx"))
                 )
+      } else {
+        message('    --> sem registro de reclamacoes para exportar')
+      }
       
       # calculando os total de cada grupo de pergunta
       q1a <- table(dados.do.periodo.p1 %>% 
@@ -266,7 +291,31 @@ main <- function() {
       cat('\n')
       cat('### Consolidação da análise estatística dos dados da pesquisa.\n')
       
+      message('  -- Consolidacoes... ')
       consolidacoes(selAno, selMes)
+
+      
+      
+      if((selMes == "Novembro") || (selMes == "Dezembro")) {
+        cat('\n\n')
+        cat('### Consolidacao por atendente:\n')
+        #dados.do.periodo.p2 <- pesquisas$p2 %>% filter(ano == selAno & mes_consolidacao == selMes)
+        dados.do.periodo.p2$atendente <- trimws(dados.do.periodo.p2$atendente)
+        t_atend <- dados.do.periodo.p2 %>% 
+                      filter(atendente != "") 
+        t_atend$recepcao <- ifelse(t_atend$recepcao == 4, "Otimo", 
+                                   ifelse(t_atend$recepcao == 3, "Bom", 
+                                          ifelse(t_atend$recepcao == 2, "Regular", 
+                                                 ifelse(t_atend$recepcao == 1, "Ruim", "Nda"))))
+        t_atend$recepcao <- factor(t_atend$recepcao, levels = c("Ruim", "Regular", "Bom", "Otimo"))
+        t_atend <- t_atend %>%
+                      group_by(atendente, recepcao) %>% 
+                      summarise(qtde = n()) %>%
+                      dcast(atendente ~ recepcao)
+                      
+        print(kable(t_atend))
+      }
+      
     }
   }  
   

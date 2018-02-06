@@ -210,6 +210,27 @@ consolidacoes <- function(selAno, selMes) {
     write.csv2(x = grupo_reclamacoes, file = file.path(outputDir, paste0("reclamacoes.", selAno, "-", selMes, ".csv")), fileEncoding = 'ISO_8859-2')
   }
   
+  
+  ##
+  # Análise dos atendentes no ambulatório
+  ##
+  atendentes_amb <- pesquisas$p2 %>% 
+    filter(ano_consolidacao == selAno & mes_consolidacao == selMes) %>% 
+    group_by(atendente, recepcao) %>% 
+    summarise(qtde = n())
+  atendentes_amb <- atendentes_amb[complete.cases(atendentes_amb), ]
+  
+  atendentes_amb[which(atendentes_amb$recepcao==1), ]$recepcao <- "Ruim"
+  atendentes_amb[which(atendentes_amb$recepcao==2), ]$recepcao <- "Regular"
+  atendentes_amb[which(atendentes_amb$recepcao==3), ]$recepcao <- "Bom"
+  atendentes_amb[which(atendentes_amb$recepcao==4), ]$recepcao <- "Otimo"
+  
+  relatorio_atendentes <- atendentes_amb %>% dcast(atendente ~ recepcao)
+  relatorio_atendentes[is.na(relatorio_atendentes)] <- 0
+
+  write.csv2(x = relatorio_atendentes, file = file.path(outputDir, paste0("ambulatorio.atendentes.", selAno, "-", selMes, ".csv")), fileEncoding = 'ISO_8859-2')
+  
+  
   ##----------------------------------------------------------------------------------------------------
   
   
@@ -300,8 +321,8 @@ consolidacoes <- function(selAno, selMes) {
 ## Extratificação de dados
 ###
 # consolidacoes(2017, "Novembro")
-consolidacoes(2017, "Dezembro")
-# consolidacoes(2018, "Janeiro")
+ consolidacoes(2017, "Dezembro")
+#consolidacoes(2018, "Janeiro")
 
 # a_consolidar <- pesquisas$p1 %>% group_by(ano_consolidacao, mes_consolidacao) %>% select(ano_consolidacao, mes_consolidacao) %>% distinct
 # for(consolidar in a_consolidar) {

@@ -1,24 +1,25 @@
 ###
 ## Importação das bibliotecas
 ###
-library(reshape2)
-library(dplyr)
-library(tidyr)
-library(lubridate)
-library(ggplot2)
-library(knitr)
-library(scales)
-library(grid)
-library(gridExtra)
-library(htmlTable)
-library(zip)
-library(mailR)
+if(!require(reshape2, quietly = T, warn.conflicts = F)){install.packages("reshape2")}
+if(!require(dplyr, quietly = T, warn.conflicts = F)){install.packages("dplyr")}
+if(!require(tidyr, quietly = T, warn.conflicts = F)){install.packages("tidyr")}
+if(!require(lubridate, quietly = T, warn.conflicts = F)){install.packages("lubridate")}
+if(!require(ggplot2, quietly = T, warn.conflicts = F)){install.packages("ggplot2")}
+if(!require(knitr, quietly = T, warn.conflicts = F)){install.packages("knitr")}
+if(!require(scales, quietly = T, warn.conflicts = F)){install.packages("scales")}
+if(!require(grid, quietly = T, warn.conflicts = F)){install.packages("grid")}
+if(!require(gridExtra, quietly = T, warn.conflicts = F)){install.packages("gridExtra")}
+if(!require(htmlTable, quietly = T, warn.conflicts = F)){install.packages("htmlTable")}
+if(!require(zip, quietly = T, warn.conflicts = F)){install.packages("zip")}
+if(!require(mailR, quietly = T, warn.conflicts = F)){install.packages("mailR")}
+
 
 
 ###
 ## Importação dos dados já estruturados
 ###
-source(file.path(getwd(), "rpsau-data.R"))
+source(file.path(getwd(), "rpsau-data.R"), encoding = 'UTF-8')
 
 
 ###
@@ -214,16 +215,17 @@ consolidacoes <- function(selAno, selMes) {
   ##
   # Análise dos atendentes no ambulatório
   ##
+  message(paste('Análise dos atendentes no ambulatório', selAno, selMes))
   atendentes_amb <- pesquisas$p2 %>% 
     filter(ano_consolidacao == selAno & mes_consolidacao == selMes) %>% 
     group_by(atendente, recepcao) %>% 
     summarise(qtde = n())
   atendentes_amb <- atendentes_amb[complete.cases(atendentes_amb), ]
   
-  atendentes_amb[which(atendentes_amb$recepcao==1), ]$recepcao <- "Ruim"
-  atendentes_amb[which(atendentes_amb$recepcao==2), ]$recepcao <- "Regular"
-  atendentes_amb[which(atendentes_amb$recepcao==3), ]$recepcao <- "Bom"
-  atendentes_amb[which(atendentes_amb$recepcao==4), ]$recepcao <- "Otimo"
+  atendentes_amb$recepcao <- replace(atendentes_amb$recepcao, atendentes_amb$recepcao == 1, "Ruim")
+  atendentes_amb$recepcao <- replace(atendentes_amb$recepcao, atendentes_amb$recepcao == 2, "Regular")
+  atendentes_amb$recepcao <- replace(atendentes_amb$recepcao, atendentes_amb$recepcao == 3, "Bom")
+  atendentes_amb$recepcao <- replace(atendentes_amb$recepcao, atendentes_amb$recepcao == 4, "Otimo")
   
   relatorio_atendentes <- atendentes_amb %>% dcast(atendente ~ recepcao)
   relatorio_atendentes[is.na(relatorio_atendentes)] <- 0
@@ -280,7 +282,7 @@ consolidacoes <- function(selAno, selMes) {
   ###
   
   sender <- "feedback.isgsaude@gmail.com" # Replace with a valid address
-  recipients <- c("hersonpc@gmail.com") # Replace with one or more valid addresses
+  recipients <- c("hersonpc@gmail.com", "assessoria.qualidade.hdt@isgsaude.org", "qualidade.hdt@isgsaude.org") # Replace with one or more valid addresses
   attach_files = c()
   # attach_files = c(file.path(outputDir, "plot01.png"), file.path(outputDir, "plot02.png"), file.path(outputDir, "plot03.png"))
   zipFile = file.path(outputDir, paste0('psau-', selAno, '-', selMes, '.zip'))
@@ -321,8 +323,43 @@ consolidacoes <- function(selAno, selMes) {
 ## Extratificação de dados
 ###
 # consolidacoes(2017, "Novembro")
- consolidacoes(2017, "Dezembro")
-#consolidacoes(2018, "Janeiro")
+# consolidacoes(2017, "Dezembro")
+# consolidacoes(2018, "Janeiro")
+# consolidacoes(2018, "Fevereiro")
+
+
+args <- commandArgs(TRUE)
+if (length(args) < 2) {
+  writeLines('Informe os parametros para calculo da análise:')
+  anoUser <- readline(paste0('Qual ano a ser processado? (', format(Sys.Date(), "%Y"), '): '))
+  mesUser <- readline(paste0('Qual mês a ser processado? (', format(Sys.Date(), "%m"), '): '))
+} else {
+  anoUser <- args[1]
+  mesUser <- args[2] 
+}
+
+if(anoUser == "") {
+  anoUser <- as.integer(format(Sys.Date(), "%Y"))
+} else {
+  anoUser <- as.integer(anoUser)
+}
+if(mesUser == "") {
+  mesUser <- as.integer(format(Sys.Date(), "%m"))
+} else {
+  mesUser <- as.integer(mesUser)
+}
+
+message(paste("parametros: ", (anoUser >= 2017) && (anoUser <= 2025) && !is.na(months_full[mesUser])))
+message(paste("ano", anoUser))
+message(paste("mesUser", mesUser, ' -> ', months_full[mesUser]))
+
+
+if( (anoUser >= 2017) && (anoUser <= 2025) && !is.na(months_full[mesUser]) ) {
+  consolidacoes(anoUser, months_full[mesUser])
+} else {
+  stop('Parametros inválidos para processamento!')
+}
+
 
 # a_consolidar <- pesquisas$p1 %>% group_by(ano_consolidacao, mes_consolidacao) %>% select(ano_consolidacao, mes_consolidacao) %>% distinct
 # for(consolidar in a_consolidar) {

@@ -1,18 +1,18 @@
 ###
 ## Importação das bibliotecas
 ###
-if(!require(reshape2, quietly = T, warn.conflicts = F)){install.packages("reshape2", dependencies = T)}
-if(!require(dplyr, quietly = T, warn.conflicts = F)){install.packages("dplyr", dependencies = T)}
-if(!require(tidyr, quietly = T, warn.conflicts = F)){install.packages("tidyr", dependencies = T)}
-if(!require(lubridate, quietly = T, warn.conflicts = F)){install.packages("lubridate", dependencies = T)}
-if(!require(ggplot2, quietly = T, warn.conflicts = F)){install.packages("ggplot2", dependencies = T)}
-if(!require(knitr, quietly = T, warn.conflicts = F)){install.packages("knitr", dependencies = T)}
-if(!require(scales, quietly = T, warn.conflicts = F)){install.packages("scales", dependencies = T)}
-if(!require(grid, quietly = T, warn.conflicts = F)){install.packages("grid", dependencies = T)}
-if(!require(gridExtra, quietly = T, warn.conflicts = F)){install.packages("gridExtra", dependencies = T)}
-if(!require(htmlTable, quietly = T, warn.conflicts = F)){install.packages("htmlTable", dependencies = T)}
-if(!require(zip, quietly = T, warn.conflicts = F)){install.packages("zip", dependencies = T)}
-if(!require(mailR, quietly = T, warn.conflicts = F)){install.packages("mailR", dependencies = T)}
+if(!require(reshape2, quietly = T, warn.conflicts = F)){install.packages("reshape2")}
+if(!require(dplyr, quietly = T, warn.conflicts = F)){install.packages("dplyr")}
+if(!require(tidyr, quietly = T, warn.conflicts = F)){install.packages("tidyr")}
+if(!require(lubridate, quietly = T, warn.conflicts = F)){install.packages("lubridate")}
+if(!require(ggplot2, quietly = T, warn.conflicts = F)){install.packages("ggplot2")}
+if(!require(knitr, quietly = T, warn.conflicts = F)){install.packages("knitr")}
+if(!require(scales, quietly = T, warn.conflicts = F)){install.packages("scales")}
+if(!require(grid, quietly = T, warn.conflicts = F)){install.packages("grid")}
+if(!require(gridExtra, quietly = T, warn.conflicts = F)){install.packages("gridExtra")}
+if(!require(htmlTable, quietly = T, warn.conflicts = F)){install.packages("htmlTable")}
+if(!require(zip, quietly = T, warn.conflicts = F)){install.packages("zip")}
+if(!require(mailR, quietly = T, warn.conflicts = F)){install.packages("mailR")}
 
 
 
@@ -34,7 +34,7 @@ outputDir = getwd();
 ###
 consolidacoes <- function(selAno, selMes) {
   
-  outputDir <- file.path(getwd(), 'output', selAno, selMes)
+  outputDir <<- file.path(getwd(), 'output', selAno, selMes)
   message(paste0('      -- Consolidacao ', selAno, '/', selMes, ' -> ', outputDir))
   
   # Criando agrupamentos de dados
@@ -55,7 +55,7 @@ consolidacoes <- function(selAno, selMes) {
                     "Nutrição", "Reabilitação", "Infraestrutura", "Ambulatório", "Geral")
   names(tmp_consolidado_geral) <- nome_medidas
   
-  resumo_mes <- reshape2::melt(tmp_consolidado_geral, variable.name = "medida", value.name = "percentual")
+  resumo_mes <- melt(tmp_consolidado_geral, variable.name = "medida", value.name = "percentual")
   resumo_mes <- cbind(medida = rownames(resumo_mes), resumo_mes)
   rownames(resumo_mes) <- NULL
   resumo_mes$medida <- factor(resumo_mes$medida, levels = unique(nome_medidas))
@@ -91,7 +91,7 @@ consolidacoes <- function(selAno, selMes) {
   ###
   
   # Pesquisa Geral
-  a <- pesquisas$p1 %>% filter(ano_consolidacao == selAno & mes_consolidacao == selMes) %>% select(a_1:h_7)
+  a <- pesquisas$p1 %>% filter(year(data) == selAno & mes_consolidacao == selMes) %>% select(a_1:h_7)
   b <- a %>% lapply(table) %>% lapply(as.data.frame) %>% Map(cbind, var = names(a),.) %>% bind_rows() %>% dcast(var ~ Var1)
   #message(names(b))
   names(b)[names(b) == "var"] <- "x"
@@ -104,7 +104,7 @@ consolidacoes <- function(selAno, selMes) {
   c <- as.data.frame(cbind(avaliacao = rownames(c), freq = c$value))
   
   # Presquisa Ambulatorial
-  a2 <- pesquisas$p2 %>% filter(ano_consolidacao == selAno & mes_consolidacao == selMes) %>% select(recepcao:medico)
+  a2 <- pesquisas$p2 %>% filter(year(data) == selAno & mes_consolidacao == selMes) %>% select(recepcao:medico)
   b2 <- a2 %>% lapply(table) %>% lapply(as.data.frame) %>% Map(cbind, var = names(a2),.) %>% bind_rows() %>% dcast(var ~ Var1)
   names(b2)[names(b2) == "var"] <- "x"
   names(b2)[names(b2) == "1"] <- "Ruim"
@@ -124,7 +124,7 @@ consolidacoes <- function(selAno, selMes) {
            freq = freq.x + freq.y,
            fr = (freq / sum(freq)) * 100)
   
-  #d <- c %>% mutate(freq = as.numeric(as.character(c$freq)), fr = (freq / sum(freq)) *100 )
+  d <- c %>% mutate(freq = as.numeric(as.character(c$freq)), fr = (freq / sum(freq)) *100 )
   
   # pie(d$fr, 
   #     labels = paste0(round(d$fr,2), '% ', d$avaliacao), 
@@ -146,20 +146,19 @@ consolidacoes <- function(selAno, selMes) {
   ###
   
   s <- pesquisas$p1 %>% 
-    filter(ano_consolidacao == selAno & mes_consolidacao == selMes) %>% 
+    filter(year(data) == selAno & mes_consolidacao == selMes) %>% 
     select(setor, m_x) %>% 
     group_by(setor) %>% 
     summarise(qtde = n())
   s$setor <- as.character(s$setor)
   s$setor <- sub('^$', "Não informado", s$setor)
-  if("Ambulatório" %in% s$setor) {
-    s[s$setor == 'Ambulatório', 2] <- 
-        s[s$setor == 'Ambulatório', 2] + 
-        nrow(pesquisas$p2 %>% filter(ano_consolidacao == selAno & mes_consolidacao == selMes))
+  if(!is.na(s[s$setor == 'Ambulatório', 2])) {
+    s[s$setor == 'Ambulatório', 2] <- s[s$setor == 'Ambulatório', 2] + nrow(pesquisas$p2 %>% 
+                                                                              filter(year(data) == selAno & mes_consolidacao == selMes))
   } else {
     s <-  rbind(s, data.frame(
       'setor' = c('Ambulatório'),
-      'qtde' = nrow(pesquisas$p2 %>% filter(ano_consolidacao == selAno & mes_consolidacao == selMes))
+      'qtde' = nrow(pesquisas$p2 %>% filter(year(data) == selAno & mes_consolidacao == selMes))
     )
     )
   }
@@ -195,30 +194,17 @@ consolidacoes <- function(selAno, selMes) {
   dados.do.periodo.p1 <- pesquisas$p1 %>% filter(ano_consolidacao == selAno & mes_consolidacao == selMes)
   dados.do.periodo.p2 <- pesquisas$p2 %>% filter(ano_consolidacao == selAno & mes_consolidacao == selMes)
   
-  grupo_elogios <- rbind(
-    dados.do.periodo.p1 %>% filter(trim(elogios) != "") %>% select(autorizo, nome, contato, elogios),
-    dados.do.periodo.p2 %>% filter(trim(elogios) != "") %>% mutate(autorizo = "Sim") %>% select(autorizo, nome, contato, elogios)
-  )
-  grupo_sugestoes <- rbind(
-    dados.do.periodo.p1 %>% filter(trim(sugestoes) != "") %>% select(autorizo, nome, contato, sugestoes),
-    dados.do.periodo.p2 %>% filter(trim(sugestoes) != "") %>% mutate(autorizo = "Sim") %>% select(autorizo, nome, contato, sugestoes)
-  )
-  grupo_reclamacoes <- rbind(
-    dados.do.periodo.p1 %>% filter(trim(reclamacoes) != "") %>% select(autorizo, nome, contato, reclamacoes),
-    dados.do.periodo.p2 %>% filter(trim(reclamacoes) != "") %>% mutate(autorizo = "Sim") %>% select(autorizo, nome, contato, reclamacoes)
-  )
-  
-  # grupo_elogios <- c(unique(dados.do.periodo.p1$elogios), unique(dados.do.periodo.p2$elogios)) %>%
-  #   trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
-  # grupo_sugestoes <- c(unique(dados.do.periodo.p1$sugestoes), unique(dados.do.periodo.p2$sugestoes)) %>%
-  #   trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
-  # grupo_reclamacoes <- c(unique(dados.do.periodo.p1$reclamacoes), unique(dados.do.periodo.p2$reclamacoes)) %>%
-  #   trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
+  grupo_elogios <- c(unique(dados.do.periodo.p1$elogios), unique(dados.do.periodo.p2$elogios)) %>%
+    trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
+  grupo_sugestoes <- c(unique(dados.do.periodo.p1$sugestoes), unique(dados.do.periodo.p2$sugestoes)) %>%
+    trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
+  grupo_reclamacoes <- c(unique(dados.do.periodo.p1$reclamacoes), unique(dados.do.periodo.p2$reclamacoes)) %>%
+    trim %>% unique %>% ifelse(. == "", NA, .) %>% as.data.frame %>% filter(!is.na(.))
   
   if(nrow(grupo_elogios) > 0) {
     write.csv2(x = grupo_elogios, file = file.path(outputDir, paste0("elogios.", selAno, "-", selMes, ".csv")), fileEncoding = 'ISO_8859-2')
   }
-  if(nrow(grupo_sugestoes) > 0) {
+  if(nrow(grupo_elogios) > 0) {
     write.csv2(x = grupo_sugestoes, file = file.path(outputDir, paste0("sugestoes.", selAno, "-", selMes, ".csv")), fileEncoding = 'ISO_8859-2')
   }
   if(nrow(grupo_reclamacoes) > 0) {
@@ -243,14 +229,7 @@ consolidacoes <- function(selAno, selMes) {
   
   relatorio_atendentes <- atendentes_amb %>% dcast(atendente ~ recepcao)
   relatorio_atendentes[is.na(relatorio_atendentes)] <- 0
-  
-  relatorio_atendentes <- 
-    relatorio_atendentes %>%
-    mutate(QTDE_PESQUISADOS = Otimo + Bom + Regular + Ruim,
-           RANK = rank(-QTDE_PESQUISADOS) )
-  
-  relatorio_atendentes <- relatorio_atendentes[order(relatorio_atendentes$RANK), ]
-  
+
   write.csv2(x = relatorio_atendentes, file = file.path(outputDir, paste0("ambulatorio.atendentes.", selAno, "-", selMes, ".csv")), fileEncoding = 'ISO_8859-2')
   
   
@@ -291,7 +270,7 @@ consolidacoes <- function(selAno, selMes) {
   names(t) <- c(paste0('Indicadores - ', selMes, '/', selAno), "Resultados")
   
   
-  html_mail_table <<- htmlTable(t, rnames = FALSE)
+  html_mail_table <- htmlTable(t, rnames = FALSE)
   
   # write.csv2(x = t, file = file.path(outputDir, paste0("estatisticas.", selAno, "-", selMes, ".csv")), fileEncoding = 'ISO_8859-2')
 
@@ -303,7 +282,7 @@ consolidacoes <- function(selAno, selMes) {
   ###
   
   sender <- "feedback.isgsaude@gmail.com" # Replace with a valid address
-  recipients <- c("hersonpc@gmail.com", "assessoria.qualidade.hdt@isgsaude.org", "qualidade.hdt@isgsaude.org", "diradm.hdt@isgsaude.org") # Replace with one or more valid addresses
+  recipients <- c("hersonpc@gmail.com", "assessoria.qualidade.hdt@isgsaude.org", "qualidade.hdt@isgsaude.org") # Replace with one or more valid addresses
   attach_files = c()
   # attach_files = c(file.path(outputDir, "plot01.png"), file.path(outputDir, "plot02.png"), file.path(outputDir, "plot03.png"))
   zipFile = file.path(outputDir, paste0('psau-', selAno, '-', selMes, '.zip'))
@@ -329,12 +308,12 @@ consolidacoes <- function(selAno, selMes) {
                      body = paste("Relatório de consolidação do PSAU<br><br>", html_mail_table),
                      html = TRUE,
                      attach.files = attach_files,
-                     smtp = list(host.name = "smtp.gmail.com", port = 465,
-                                 user.name = "feedback.isgsaude@gmail.com",
+                     smtp = list(host.name = "smtp.gmail.com", port = 465, 
+                                 user.name = "feedback.isgsaude@gmail.com",            
                                  passwd = "isg2015ISG", ssl = TRUE),
                      authenticate = TRUE,
                      send = TRUE)
-  email
+  #email
   
   
 }
@@ -348,67 +327,43 @@ consolidacoes <- function(selAno, selMes) {
 # consolidacoes(2018, "Janeiro")
 # consolidacoes(2018, "Fevereiro")
 
-#consolidacoes(2018, "Abril")
-#consolidacoes(2018, "Maio")
-#consolidacoes(2018, "Junho")
-#consolidacoes(2018, "Julho")
-#consolidacoes(2018, "Agosto")
-#consolidacoes(2018, "Setembro")
-# consolidacoes(2018, "Outubro")
-# consolidacoes(2018, "Novembro")
-# consolidacoes(2018, "Dezembro")
-# consolidacoes(2019, "Janeiro")
-# consolidacoes(2019, "Fevereiro")
-# consolidacoes(2019, "Março")
-# consolidacoes(2019, "Abril")
-# consolidacoes(2019, "Maio")
-# consolidacoes(2019, "Junho")
-# consolidacoes(2019, "Julho")
-# consolidacoes(2019, "Agosto")
-# consolidacoes(2019, "Setembro")
-# consolidacoes(2019, "Outubro")
-# consolidacoes(2019, "Novembro")
-# consolidacoes(2019, "Dezembro")
-# consolidacoes(2020, "Janeiro")
-# consolidacoes(2020, "Fevereiro")
-consolidacoes(2020, "Março")
 
-# args <- commandArgs(TRUE)
-# if (length(args) < 2) {
-#   writeLines('Informe os parametros para calculo da análise:')
-#   anoUser <- readline(paste0('Qual ano a ser processado? (', format(Sys.Date(), "%Y"), '): '))
-#   mesUser <- readline(paste0('Qual mês a ser processado? (', format(Sys.Date(), "%m"), '): '))
-# } else {
-#   anoUser <- args[1]
-#   mesUser <- args[2] 
+args <- commandArgs(TRUE)
+if (length(args) < 2) {
+  writeLines('Informe os parametros para calculo da análise:')
+  anoUser <- readline(paste0('Qual ano a ser processado? (', format(Sys.Date(), "%Y"), '): '))
+  mesUser <- readline(paste0('Qual mês a ser processado? (', format(Sys.Date(), "%m"), '): '))
+} else {
+  anoUser <- args[1]
+  mesUser <- args[2] 
+}
+
+if(anoUser == "") {
+  anoUser <- as.integer(format(Sys.Date(), "%Y"))
+} else {
+  anoUser <- as.integer(anoUser)
+}
+if(mesUser == "") {
+  mesUser <- as.integer(format(Sys.Date(), "%m"))
+} else {
+  mesUser <- as.integer(mesUser)
+}
+
+message(paste("parametros: ", (anoUser >= 2017) && (anoUser <= 2025) && !is.na(months_full[mesUser])))
+message(paste("ano", anoUser))
+message(paste("mesUser", mesUser, ' -> ', months_full[mesUser]))
+
+
+if( (anoUser >= 2017) && (anoUser <= 2025) && !is.na(months_full[mesUser]) ) {
+  consolidacoes(anoUser, months_full[mesUser])
+} else {
+  stop('Parametros inválidos para processamento!')
+}
+
+
+# a_consolidar <- pesquisas$p1 %>% group_by(ano_consolidacao, mes_consolidacao) %>% select(ano_consolidacao, mes_consolidacao) %>% distinct
+# for(consolidar in a_consolidar) {
+#   message(consolidar)
+#   #message(consolidar)
+#   #message(paste('Consolidando', consolidar$ano_consolidacao, '-', consolidar$mes_consolidacao))
 # }
-# 
-# if(anoUser == "") {
-#   anoUser <- as.integer(format(Sys.Date(), "%Y"))
-# } else {
-#   anoUser <- as.integer(anoUser)
-# }
-# if(mesUser == "") {
-#   mesUser <- as.integer(format(Sys.Date(), "%m"))
-# } else {
-#   mesUser <- as.integer(mesUser)
-# }
-# 
-# message(paste("parametros: ", (anoUser >= 2017) && (anoUser <= 2025) && !is.na(months_full[mesUser])))
-# message(paste("ano", anoUser))
-# message(paste("mesUser", mesUser, ' -> ', months_full[mesUser]))
-# 
-# 
-# if( (anoUser >= 2017) && (anoUser <= 2025) && !is.na(months_full[mesUser]) ) {
-#   consolidacoes(anoUser, months_full[mesUser])
-# } else {
-#   stop('Parametros inválidos para processamento!')
-# }
-# 
-# 
-# # a_consolidar <- pesquisas$p1 %>% group_by(ano_consolidacao, mes_consolidacao) %>% select(ano_consolidacao, mes_consolidacao) %>% distinct
-# # for(consolidar in a_consolidar) {
-# #   message(consolidar)
-# #   #message(consolidar)
-# #   #message(paste('Consolidando', consolidar$ano_consolidacao, '-', consolidar$mes_consolidacao))
-# # }

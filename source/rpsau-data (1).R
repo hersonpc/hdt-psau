@@ -62,8 +62,7 @@ normatizar_pesquisa_geral <- function(pesquisa) {
                           "g_1", "g_2", "g_3", 
                           "h_1", "h_2", "h_3", "h_4", "h_5", "h_6", "h_7", 
                           "elogios", "sugestoes", "reclamacoes", 
-                          "mes_consolidacao", "id", "ano_consolidacao", "pesquisa_ativa", "equipe_pesquisa", "nps",
-                          "quando_queixa", "periodo_queixa")
+                          "mes_consolidacao", "id", "ano_consolidacao")
   
   pesquisa$id <- as.numeric(pesquisa$id)
   pesquisa$nome <- iconv(as.character(pesquisa$nome), to = "ISO_8859-2")
@@ -143,7 +142,7 @@ normatizar_pesquisa_ambulatorio <- function(pesquisa) {
   
   # renomeando campos
   colnames(pesquisa) <- c("data", "nome", "contato", "recepcao", "medico", "elogios", 
-                          "reclamacoes", "sugestoes", "id", "mes_consolidacao", "atendente", "ano_consolidacao", "nps")
+                          "reclamacoes", "sugestoes", "id", "mes_consolidacao", "atendente", "ano_consolidacao")
   
   # ajustando propriedades
   pesquisa$id <- as.numeric(pesquisa$id)
@@ -185,23 +184,9 @@ importar_dados_psau <- function() {
 
   # baixando dados....
   message('Downloading data from Google Spreadsheets... #1')
-  
-  #baixando arquivos...
-  dir.create(file.path(getwd(), "temp"), showWarnings = FALSE)
-  download.file(url.geral, "temp/formulario.geral.csv", mode = "wb")
-  download.file(url.ambulatorio, "temp/formulario.ambulatorio.csv", mode = "wb")
-  
-  # carregando arquivos...
-  pesq.geral <- read.csv("temp/formulario.geral.csv", fileEncoding = 'UTF-8')
-  pesq.ambulatorio <- read.csv("temp/formulario.ambulatorio.csv", fileEncoding = 'UTF-8')
-  
-  # removendo temporarios...
-  file.remove(list.files(file.path(getwd(), "temp"), full.names = T))
-  
-  
-  #pesq.geral <- read.csv(url.geral, fileEncoding = 'UTF-8') #, na.strings = c(""," ","NA")
+  pesq.geral <- read.csv(url.geral, fileEncoding = 'UTF-8') #, na.strings = c(""," ","NA")
   message('Downloading data from Google Spreadsheets... #2')
-  #pesq.ambulatorio <- read.csv(url.ambulatorio, fileEncoding = 'UTF-8') #, na.strings = c(""," ","NA")
+  pesq.ambulatorio <- read.csv(url.ambulatorio, fileEncoding = 'UTF-8') #, na.strings = c(""," ","NA")
 
   # normatizando dados...
   pesq.geral <- normatizar_pesquisa_geral(pesq.geral)
@@ -217,9 +202,9 @@ importar_dados_psau <- function() {
     
   # montando estrutura de saida...
   return( list("p1" = tbl_df(pesq.geral), 
-               "p1_medias" = tbl_df(pesq.geral %>% select(ano = ano_consolidacao, mes = mes_consolidacao, m_a:m_x)),
+               "p1_medias" = tbl_df(pesq.geral %>% select(ano, mes = mes_consolidacao, m_a:m_x)),
                "p2" = tbl_df(pesq.ambulatorio),
-               "p2_medias" = tbl_df(pesq.ambulatorio %>% select(ano = ano_consolidacao, mes = mes_consolidacao, recepcao:medico, m))
+               "p2_medias" = tbl_df(pesq.ambulatorio %>% select(ano, mes = mes_consolidacao, recepcao:medico, m))
                ) 
           )
 }

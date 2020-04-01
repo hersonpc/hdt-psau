@@ -216,63 +216,6 @@ plotNPStoPNG <- function(nps.df, consulta_trimestre, to_file = FALSE) {
   }
 }
 
-comparacaoNPS <- function(data) {
-  
-  data <-
-    rbind(
-      data$geral %>%
-        mutate(
-          ANO = Consolidar.no.ano, 
-          MES = factor(Consolidar.no.mês, levels = months_full),
-          PERIODO = factor(paste0(ANO, '/', MES), levels = paste0(periodos$ANO,'/',periodos$MES)),
-          ID = paste0('G.', ID),
-          NOTA = Nota.da.escala.de.0.a.10) %>%
-        #filter(ANO == 2019, MES %in% resumo$MES) %>%
-        select(PERIODO, ID, NOTA) %>%
-        filter(!is.na(NOTA))
-      ,
-      data$ambulatorio %>%
-        mutate(
-          ANO = Consolidar.no.ano, 
-          MES = factor(Consolidar.no.mês, levels = months_full),
-          PERIODO = factor(paste0(ANO, '/', MES), levels = paste0(periodos$ANO,'/',periodos$MES)),
-          ID = paste0('A.', ID),
-          NOTA = Nota.da.escala.de.0.a.10) %>%
-        filter(ANO == 2019, MES %in% resumo$MES) %>%
-        select(PERIODO, ID, NOTA) %>%
-        filter(!is.na(NOTA))
-    )
-  
-  output <- 
-    data %>% 
-    mutate(
-      CLASSE = ifelse(NOTA <= 6, 'Detrator', ifelse(NOTA >= 9, 'Promoter', 'Neutro')),
-      NPS = ifelse(NOTA <= 6, -1, ifelse(NOTA >= 9, 1, 0))
-    ) %>%
-    filter(!is.na(NOTA), !is.na(PERIODO))
-  
-  output %>% 
-    group_by(PERIODO) %>%
-    summarise(DETRATORES = sum(ifelse(CLASSE == 'Detrator', 1, 0)),
-              NEUTRO = sum(ifelse(CLASSE == 'Neutro', 1, 0)),
-              PROMOTORES = sum(ifelse(CLASSE == 'Promoter', 1, 0))) %>%
-    melt() %>%
-    ggplot(aes(x = PERIODO, y = value, fill = variable)) +
-    geom_col(show.legend = FALSE) + 
-    geom_text( aes(label = value), vjust = -1.1 ) +
-    facet_wrap(~variable) +
-    scale_y_continuous(limits = c(0, 400)) +
-    theme_bw() + 
-    labs(title = "NPS Composição",
-         x = "",
-         y = "\nNumero absoluto\n",
-         caption = "Fonte: PSAU HDT\nDados consolidados em 19/03/2020 11:00:13")
-  
-  table(output$PERIODO, output$CLASSE)
-  return(output)
-}
-
-
 
 ###################################################################################################
 ###################################################################################################
@@ -282,6 +225,8 @@ psau.df <- loadPSAU()
 
 
 nps <- tabelaNPS(psau.df)
+
 plotNPStoPNG(nps$df, "2019.Q3", T)
 plotNPStoPNG(nps$df, "2019.Q4", T)
 plotNPStoPNG(nps$df, "2020.Q1", T)
+plotNPStoPNG(nps$df, "2020.Q2", F)

@@ -31,3 +31,19 @@ vignettes/*.pdf
 # Temporary files created by R markdown
 *.utf8.md
 *.knit.md
+
+# Ignorar pastas virtuais
+venv/
+.venv/
+*.venv/
+
+# Ignorar arquivos de configuração
+*.ini
+*.log
+*.cfg
+*.conf
+*.env
+*.env.*
+
+# Ignorar pasta de dados
+data/

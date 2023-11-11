@@ -8,14 +8,15 @@ import requests # pip install requests
 import pandas as pd # pip install pandas
 import numpy as np # pip install numpy
 import streamlit as st # pip install streamlit
-from datetime import datetime
-# from unidecode import unidecode
-from rich.console import Console # pip install rich
 from io import StringIO, BytesIO
+from datetime import datetime, timedelta
+from rich.console import Console # pip install rich
 import matplotlib.pyplot as plt # pip install matplotlib
 import plotly.express as px # pip install plotly
 import plotly.graph_objects as go
 import seaborn as sns # pip install seaborn
+from jinja2 import Template  # pip install Jinja2
+
 
 
 local_data_filename = 'data/data.parquet'
@@ -66,19 +67,38 @@ def download_data():
         # converter data para o tipo datetime
         df['data'] = pd.to_datetime(df['data'], format='%d/%m/%Y %H:%M:%S')
         
+        df['local'] = df['local'].str.strip().str.upper()
+        
+        df['com_opiniao'] = np.where(df['elogio'].notna() | df['sugestao'].notna() | df['reclamacao'].notna(), 1, 0)
+        df['sem_opiniao'] = np.where(df['elogio'].isna() & df['sugestao'].isna() & df['reclamacao'].isna(), 1, 0)
+        
         # criar coluna de ano, mes e "ano/mes"
         df['ano'] = df['data'].dt.year
         df['mes'] = df['data'].dt.month
-        df['ano_mes'] = df['data'].dt.strftime('%Y/%m')
+        df['periodo'] = df['data'].dt.strftime('%Y/%m')
+        
+        # deferminar a tipificação da manifestação
+        df['tipo'] = np.where(df['elogio'].notna(), 'elogio', np.where(df['sugestao'].notna(), 'sugestao', np.where(df['reclamacao'].notna(), 'reclamacao', 'sem opinião')))
         
         # classificar a nota do nps
         df['classe'] = np.where(df['nps'] >= 9, 'promotor', np.where(df['nps'] >= 7, 'neutro', 'detrator'))
+        
+        # criar o campo 'flag' com bolinha verde se a classificação for 'promotor', azul se for 'neutro' e vermelha se for 'detrator'
+        df['flag'] = np.where(df['classe'] == 'promotor', '🟢', np.where(df['classe'] == 'neutro', '🔵', '🔴'))
+        
         # alterar a ordem da coluna classe para ficar na 3a posição
-        df = df[['data', 'local', 'nps', 'classe', 'tipo', 'elogio', 'sugestao', 'reclamacao', 'nome', 'telefone', 'email', 'ano', 'mes', 'ano_mes']]
+        df = df[[
+            'data', 'local', 'nps', 'classe', 'flag', 'tipo', 'elogio', 
+            'sugestao', 'reclamacao', 'com_opiniao', 'sem_opiniao', 'nome', 
+            'telefone', 'email', 'ano', 'mes', 'periodo'
+        ]]
         
         # ordenar por data
         df.sort_values(by=['data'], inplace=True, ascending=False)
         
+        # estabelendo o valor padrão para os campos vazios
+        df.fillna('-', inplace=True)
+
         # armazenar em cache
         df.to_parquet(local_data_filename, index=False)
         return df
@@ -102,139 +122,102 @@ def get_data():
     
     return df
 
-st.title('Dashboard - PSAU')
-st.subheader('Pesquisa de Satisfação dos Usuários')
-st.markdown(f'<h5 style="color: #6880c7;">{hospital_nome}</h5>', unsafe_allow_html=True)
-# st.markdown(f'<h2 style="color: firebrick;text-align:center;border-bottom: 4px solid firebrick;margin-bottom: 1rem;padding: .5rem;">{sel_setor.upper()}<>
+def agrupar_por_setor(df):
+    # agrupar para cada local e totalizar a quantidade de Elogios, Sugestões e Reclamações em um único dataframe
+    df_grupos_locais = df.groupby(['tipo','local']).agg({
+        'data': 'count',
+    }).reset_index()
+    # sort por tipo
+    # st.write(df_grupos_locais)
 
+    df_grupos_locais_pivot = df_grupos_locais.pivot(index='local', columns='tipo', values='data').reset_index()
+    df_grupos_locais_pivot = df_grupos_locais_pivot[['local', 'elogio', 'sugestao', 'reclamacao', 'sem opinião']]
+    df_grupos_locais_pivot['total'] = df_grupos_locais_pivot[['elogio', 'sugestao', 'reclamacao', 'sem opinião']].sum(axis=1)
+    df_grupos_locais_pivot['proporcao'] = round(df_grupos_locais_pivot['total'] / len(df) * 100, 1)
 
-df = get_data()
-periodos = df['ano_mes'].unique()
-locais = df['local'].unique()
+    # Substitua valores NaN por 0 (se necessário)
+    df_grupos_locais_pivot = df_grupos_locais_pivot.fillna(0)
+    
+    df_grupos_locais_pivot['elogio'] = df_grupos_locais_pivot['elogio'].astype(int)
+    df_grupos_locais_pivot['sugestao'] = df_grupos_locais_pivot['sugestao'].astype(int)
+    df_grupos_locais_pivot['reclamacao'] = df_grupos_locais_pivot['reclamacao'].astype(int)
+    df_grupos_locais_pivot['sem opinião'] = df_grupos_locais_pivot['sem opinião'].astype(int)
+    df_grupos_locais_pivot['total'] = df_grupos_locais_pivot['total'].astype(int)
+    df_grupos_locais_pivot['str_proporcao'] = df_grupos_locais_pivot['proporcao'].astype(str) + '%'
 
-df_nps = pd.DataFrame(columns=[
-        'ano_mes', 'nps', 'classificacao', 'total', 'promotores', 'percentual_promotores',
+    return df_grupos_locais_pivot
+
+def calcular_nps():
+    df_nps = pd.DataFrame(columns=[
+        'periodo', 'nps', 'classificacao', 'total', 'promotores', 'percentual_promotores',
         'neutros', 'percentual_neutros', 'detratores', 'percentual_detratores'
     ])
 
-if os.path.exists(local_nps_filename):
-    console.log('- Obtendo o NPS em cache')
-    df_nps = pd.read_parquet(local_nps_filename)
-else:
-    console.log('- Calculando o NPS')
-    # para cada periodo, calcular o nps
-    for periodo in periodos:
-        df_periodo = df.query("ano_mes == @periodo", engine="python")
-        
-        # quantificar os promotores, neutros e detratores
-        df_promotores = df_periodo.query("nps >= 9", engine="python")
-        df_neutros = df_periodo.query("nps >= 7 and nps <= 8", engine="python")
-        df_detratores = df_periodo.query("nps <= 6", engine="python")
-        
-        # calcular as proporções
-        total_manifestacoes = len(df_periodo)
-        percentual_promotores = (len(df_promotores) / total_manifestacoes)
-        percentual_neutros = (len(df_neutros) / total_manifestacoes)
-        percentual_detratores = (len(df_detratores) / total_manifestacoes)
-        
-        # calcular o score
-        score_nps = percentual_promotores - percentual_detratores
-        
-        # classificar o score
-        if score_nps >= 0.75:
-            classificacao = 'Excelência'
-        elif score_nps >= 0.5:
-            classificacao = 'Qualidade'
-        elif score_nps >= 0.25:
-            classificacao = 'Aperfeiçoamento'
-        else:
-            classificacao = 'Crítica'
-        
-        nps_dict = {
-            'ano_mes': periodo,
-            'nps': round(score_nps * 100, 2),
-            'classificacao': classificacao,
-            'total': total_manifestacoes,
-            'promotores': len(df_promotores),
-            'percentual_promotores': f'{round(percentual_promotores * 100, 2)}%',
-            'neutros': len(df_neutros),
-            'percentual_neutros': f'{round(percentual_neutros * 100, 2)}%',
-            'detratores': len(df_detratores),
-            'percentual_detratores': f'{round(percentual_detratores * 100, 2)}%'
-        }
-        df_nps = pd.concat([df_nps, pd.DataFrame([nps_dict])], ignore_index=True)
-    # armazenar em cache
-    console.log('- Armazenando o NPS em cache')
-    df_nps.to_parquet(local_nps_filename, index=False)
+    if os.path.exists(local_nps_filename):
+        console.log('- Obtendo o NPS em cache')
+        df_nps = pd.read_parquet(local_nps_filename)
+    else:
+        console.log('- Calculando o NPS')
+        # para cada periodo, calcular o nps
+        for periodo in periodos:
+            df_periodo = df.query("periodo == @periodo", engine="python")
+            
+            # quantificar os promotores, neutros e detratores
+            df_promotores = df_periodo.query("nps >= 9", engine="python")
+            df_neutros = df_periodo.query("nps >= 7 and nps <= 8", engine="python")
+            df_detratores = df_periodo.query("nps <= 6", engine="python")
+            
+            # calcular as proporções
+            total_manifestacoes = len(df_periodo)
+            percentual_promotores = (len(df_promotores) / total_manifestacoes)
+            percentual_neutros = (len(df_neutros) / total_manifestacoes)
+            percentual_detratores = (len(df_detratores) / total_manifestacoes)
+            
+            # calcular o score
+            score_nps = percentual_promotores - percentual_detratores
+            
+            # classificar o score
+            if score_nps >= 0.75:
+                classificacao = 'Excelência'
+            elif score_nps >= 0.5:
+                classificacao = 'Qualidade'
+            elif score_nps >= 0.25:
+                classificacao = 'Aperfeiçoamento'
+            else:
+                classificacao = 'Crítica'
+            
+            nps_dict = {
+                'periodo': periodo,
+                'nps': round(score_nps * 100, 2),
+                'classificacao': classificacao,
+                'total': total_manifestacoes,
+                'promotores': len(df_promotores),
+                'percentual_promotores': f'{round(percentual_promotores * 100, 2)}%',
+                'neutros': len(df_neutros),
+                'percentual_neutros': f'{round(percentual_neutros * 100, 2)}%',
+                'detratores': len(df_detratores),
+                'percentual_detratores': f'{round(percentual_detratores * 100, 2)}%'
+            }
+            df_nps = pd.concat([df_nps, pd.DataFrame([nps_dict])], ignore_index=True)
+        # armazenar em cache
+        console.log('- Armazenando o NPS em cache')
+        df_nps.to_parquet(local_nps_filename, index=False)
+    return df_nps
 
-# imprimindo o nps no console
-console.log(df_nps)
-
-# SIDEBAR ============================================================================================================
-with st.sidebar.title("Filtros"):
-    input_periodo = st.sidebar.selectbox("Qual período você deseja consultar?", periodos)
-    input_local = st.sidebar.multiselect("Local informado pelo usuário", locais, default=locais)
-
-
-# aplicando filtros nos dados ========================================================================================
-df = df.query("ano_mes == @input_periodo and local in @input_local", engine="python")
-df_nps = df_nps.query("ano_mes == @input_periodo", engine="python")
-df_elogios = df.query("not elogio.isna()", engine="python").drop(['tipo', 'sugestao', 'reclamacao', 'ano', 'mes', 'ano_mes'], axis=1)
-df_sugestao = df.query("not sugestao.isna()", engine="python").drop(['tipo', 'elogio', 'reclamacao', 'ano', 'mes', 'ano_mes'], axis=1)
-df_reclamacao = df.query("not reclamacao.isna()", engine="python").drop(['tipo', 'elogio', 'sugestao', 'ano', 'mes', 'ano_mes'], axis=1)
-
-# agrupar para cada local e totalizar a quantidade de Elogios, Sugestões e Reclamações em um único dataframe
-df_grupos_locais = df.groupby(['local']).agg({
-    'elogio': 'count',
-    'sugestao': 'count',
-    'reclamacao': 'count'
-}).reset_index()
-# definir a coluna "local" como index
-df_grupos_locais.set_index('local', inplace=True)
-
-# Defina uma paleta de cores usando seaborn
-color_palette = sns.color_palette("Blues", as_cmap=True)
-
-# Aplique as cores com base nos valores
-df_grupos_locais_styled = df_grupos_locais.style.background_gradient(cmap=color_palette, axis=0)
-
-
-console.log(df_grupos_locais)
-
-
-total_manifestacoes = len(df)
-total_elogios = len(df_elogios)
-total_sugestoes = len(df_sugestao)
-total_reclamacoes = len(df_reclamacao)
-
-# obter o "nps" da primeira linha
-nota_nps = df_nps['nps'].iloc[0]
-classificacao_nps = df_nps['classificacao'].iloc[0]
-
-# apresentação do nps ================================================================================================
-indicadores = st.columns(4)
-with indicadores[0]:
-    st.metric(label="NPS", value=nota_nps)
-with indicadores[1]:
-    st.metric(label="Zona de classificação", value=classificacao_nps)
-
-# apresentação quantitativa dos dados ================================================================================
-indicadores = st.columns(4)
-with indicadores[0]:
-    st.metric(label="Total Manifestações", value=total_manifestacoes)
-with indicadores[1]:
-    st.metric(label="Total Elogios", value=total_elogios)
-with indicadores[2]:
-    st.metric(label="Total Sugestões", value=total_sugestoes)
-with indicadores[3]:
-    st.metric(label="Total Reclamações", value=total_reclamacoes)
-
-
-graficos = st.columns([4,2])
-with graficos[0]:
-    # with st.expander("Manifestações por dia"):
+def grafico_evolucao_diario(df):
     # criar um grafico com plotly monstrando a quantidade de manifestações por dia
-    df_por_data = df.groupby(df['data'].dt.date).size().reset_index(name='total')
+    # df_por_data = df.groupby(df['data'].dt.date).size().reset_index(name='total')
+    
+    data_minima = df['data'].min().date()
+    data_maxima = datetime.today().date()
+    
+    # Crie um DataFrame com todas as datas no intervalo desejado
+    datas_todas = pd.date_range(start=data_minima, end=data_maxima, freq='D').date
+    df_datas_todas = pd.DataFrame({'data': datas_todas})
+    df_por_data = df_datas_todas.merge(df.groupby(df['data'].dt.date).size().reset_index(name='total'), how='left', on='data')
+
+    df_por_data['total'].fillna(0, inplace=True) # substituir os valores nulos por zero
+
     # st.write(df_por_data)
 
 
@@ -246,7 +229,7 @@ with graficos[0]:
         ticks_espacamento = 1
     else:
         ticks_espacamento = 10 #int(maximo_apurados_em_uma_data / 4)
-    # st.write(f'ticks_espacamento: {ticks_espacamento}, max: {maximo_apurados_em_uma_data}')
+    st.write(f'ticks_espacamento: {ticks_espacamento}, max: {maximo_apurados_em_uma_data}')
     
     # Configurando layout
     fig.update_layout(
@@ -261,7 +244,7 @@ with graficos[0]:
         yaxis=dict(
             tickmode='linear',
             tick0=0,
-            dtick=maximo_apurados_em_uma_data
+            dtick=ticks_espacamento
         ),
         height=350
     )
@@ -271,22 +254,180 @@ with graficos[0]:
 
     # Adicionando pontos mais evidentes
     fig.update_traces(marker=dict(size=8, line=dict(width=2, color='DarkSlateGray')))
+    
+    return fig
 
-    # Exibindo o gráfico no Streamlit
-    st.plotly_chart(fig, use_container_width=True)
+def grafico_composicao_setores(df):
+    df = df.sort_values('Total de manifestações', ascending=False)
+    ordem_categorias = df['local'].tolist()
+    
+
+    # Crie um gráfico de barras com Plotly Express
+    fig = px.bar(
+        df,
+        x='local',
+        y='% Composição',
+        title='Proporção das manifestações dos usuários por setor',
+        labels={'% Composição': 'Proporção de Composição', 'local': 'Setores'},
+        hover_data=['Elogios', 'Sugestões', 'Reclamações', 'Total de manifestações', 'Com Opinião', 'Sem Opinião'],
+        color_continuous_scale='Blues',
+        category_orders={'local': ordem_categorias}  # Defina a ordem das categorias
+    )
+    
+    # definir o eixo y como percentual
+    # fig.update_yaxes(tickformat="%")
+
+    # # Exiba o gráfico
+    # fig.show()
+    return fig
+
+
+
+
+st.title('Dashboard - PSAU')
+st.subheader('Pesquisa de Satisfação dos Usuários')
+st.markdown(f'<h5 style="color: #6880c7;">{hospital_nome}</h5>', unsafe_allow_html=True)
+# st.markdown(f'<h2 style="color: firebrick;text-align:center;border-bottom: 4px solid firebrick;margin-bottom: 1rem;padding: .5rem;">{sel_setor.upper()}<>
+
+
+df = get_data()
+df_full = df.copy()
+periodos = df['periodo'].unique()
+locais = df['local'].unique()
+
+
+with st.spinner('Processando...'):
+    df_nps = calcular_nps()
+
+    # imprimindo o nps no console
+    console.log(df_nps)
+
+# SIDEBAR ============================================================================================================
+with st.sidebar.title("Filtros"):
+    input_visualizacao = st.sidebar.radio("Perspectiva de Visualização", ["Instituciional", "Setorial"], index=0)
+    # st.write(f"Visualização: {input_visualizacao}")
+    input_periodo = st.sidebar.selectbox("Qual período você deseja consultar?", periodos)
+    input_local = st.sidebar.multiselect("Local informado pelo usuário", locais, default=locais)
+
+
+# aplicando filtros nos dados ========================================================================================
+df = df.query("periodo == @input_periodo and local in @input_local", engine="python")
+if df is None or df.empty:
+    st.error("❌ Nenhum dado encontrado para os filtros selecionados. Considere alterar os filtros e tentar novamente.")
+    st.stop()
+
+# separando os dataframes
+df_nps = df_nps.query("periodo == @input_periodo", engine="python")
+df_elogios = df.query("tipo=='elogio'", engine="python").drop(['tipo', 'sugestao', 'reclamacao', 'com_opiniao', 'sem_opiniao', 'ano', 'mes', 'periodo'], axis=1)
+df_sugestao = df.query("tipo=='sugestao'", engine="python").drop(['tipo', 'elogio', 'reclamacao', 'com_opiniao', 'sem_opiniao', 'ano', 'mes', 'periodo'], axis=1)
+df_reclamacao = df.query("tipo=='reclamacao'", engine="python").drop(['tipo', 'elogio', 'sugestao', 'com_opiniao', 'sem_opiniao', 'ano', 'mes', 'periodo'], axis=1)
+df_sem_opiniao = df.query("tipo=='sem opinião'", engine="python").drop(['tipo', 'ano', 'mes', 'elogio', 'sugestao', 'reclamacao', 'com_opiniao', 'sem_opiniao', 'periodo'], axis=1)
+
+
+
+df_grupos_locais = df.groupby(['local']).agg({
+    'elogio': 'count',
+    'sugestao': 'count',
+    'reclamacao': 'count',
+    'com_opiniao': 'count',
+    'sem_opiniao': 'count',
+    'data': 'count',
+}).reset_index()
+
+
+df_grupos_locais.rename(columns={'data': 'total'}, inplace=True)
+
+# calculando proporção do local
+df_grupos_locais['proporcao'] = round(df_grupos_locais['total'] / len(df) * 100, 1)
+df_grupos_locais['proporcao'] = df_grupos_locais['proporcao'].astype(str) + '%'
+# calculando o total de manifestações por grupo
+df_grupos_locais['com_opiniao'] = df_grupos_locais[['elogio', 'sugestao', 'reclamacao']].sum(axis=1)
+df_grupos_locais['sem_opiniao'] = df_grupos_locais['total'] - df_grupos_locais['com_opiniao']
+
+# renomeando
+df_grupos_locais.rename(columns={
+    'elogio': 'Elogios',
+    'sugestao': 'Sugestões',
+    'reclamacao': 'Reclamações',
+    'total': 'Total de manifestações',
+    'proporcao': '% Composição',
+    'com_opiniao': 'Com Opinião',
+    'sem_opiniao': 'Sem Opinião',
+    }, inplace=True)
+
+# definir a coluna "local" como index
+# df_grupos_locais.set_index('local', inplace=True)
+
+# Defina uma paleta de cores usando seaborn
+color_palette = sns.color_palette("Blues", as_cmap=True)
+
+# Aplique as cores com base nos valores
+df_grupos_locais_styled = df_grupos_locais.style.background_gradient(cmap=color_palette, axis=0)
+
+
+# console.log(df_grupos_locais)
+
+
+total_manifestacoes = len(df)
+total_elogios = len(df_elogios)
+total_sugestoes = len(df_sugestao)
+total_reclamacoes = len(df_reclamacao)
+total_sem_opiniao = len(df_sem_opiniao)
+
+# obter o "nps" da primeira linha
+nota_nps = df_nps['nps'].iloc[0]
+classificacao_nps = df_nps['classificacao'].iloc[0]
+
+# apresentação do nps ================================================================================================
+indicadores = st.columns(4)
+with indicadores[0]:
+    st.metric(label="NPS", value=nota_nps)
+with indicadores[1]:
+    st.metric(label="Zona de classificação", value=classificacao_nps)
+
+# apresentação quantitativa dos dados ================================================================================
+indicadores = st.columns(5)
+with indicadores[0]:
+    st.metric(label="Total Manifestações", value=total_manifestacoes)
+with indicadores[1]:
+    st.metric(label="Total Elogios", value=total_elogios)
+with indicadores[2]:
+    st.metric(label="Total Sugestões", value=total_sugestoes)
+with indicadores[3]:
+    st.metric(label="Total Reclamações", value=total_reclamacoes)
+with indicadores[4]:
+    st.metric(label="Total Sem Opinião", value=total_sem_opiniao)
+
+
+graficos = st.columns([4,2])
+with graficos[0]:
+    # criar um grafico com plotly monstrando a quantidade de manifestações por dia
+    st.plotly_chart(grafico_evolucao_diario(df), use_container_width=True)
 
 with graficos[1]:
     # Supondo que df seja o seu DataFrame
     df_composicao = df[['elogio', 'sugestao', 'reclamacao']].count().reset_index(name='quantidade')
     df_composicao.columns = ['Tipo', 'Quantidade']
+    
+    com_opiniao_total = df_composicao['Quantidade'].sum()
+    # st.write(f"com_opiniao_total: {com_opiniao_total}")
+    total_manifestacoes = len(df)
 
     # Mapeando as cores para cada tipo
     cores = {'elogio': 'limegreen', 'sugestao': 'royalblue', 'reclamacao': 'firebrick'}
     df_composicao['Cor'] = df_composicao['Tipo'].map(cores)
-
+    # st.write(df)
+    # st.write(df_composicao)
     # Criando o gráfico de pizza com cores personalizadas
-    fig = px.pie(df_composicao, values='Quantidade', names='Tipo', title='Composição das manifestações',
-                color='Tipo', color_discrete_map=cores, hole=.3, height=400)
+    fig = px.pie(df_composicao, 
+                    values='Quantidade', 
+                    names='Tipo', 
+                    title='Composição das manifestações',
+                    color='Tipo', 
+                    color_discrete_map=cores, 
+                    # hover_data=['Quantidade'],
+                    hole=.3, 
+                    height=400)
 
     # Exibindo o gráfico no Streamlit
     st.plotly_chart(fig, use_container_width=True)
@@ -295,52 +436,72 @@ with graficos[1]:
 
 # with st.expander("NPS: Net Promoter Score", expanded=True):
 with st.expander("NPS", expanded=False):
-    st.write(f"""#### O que é o NPS?  
-O Net Promoter Score (NPS) é uma metodologia de satisfação de clientes desenvolvida para avaliar o grau de fidelidade dos clientes de qualquer perfil de empresa.
-Para calcular o NPS, é realizada uma única pergunta ao cliente: “Em uma escala de 0 a 10, o quanto você indicaria nossa empresa para um amigo?”.
+    
+    
+    # Lê o conteúdo do arquivo de modelo
+    with open('markdown/nps.md', 'r', encoding='utf-8') as f:
+        template_text = f.read()
 
-A partir da resposta, os clientes são divididos em 3 categorias:
+    # Cria um objeto Template
+    template = Template(template_text)
 
-- Notas de 0 a 6: Detratores
-- Notas de 7 a 8: Neutros
-- Notas de 9 a 10: Promotores
+    # Renderiza o template com variáveis específicas
+    rendered_text = template.render(input_periodo=input_periodo, df_nps=df_nps)
 
-O cálculo do NPS é feito subtraindo o percentual de clientes detratores do percentual de clientes promotores. O resultado varia de -100 a 100.
+    st.write(rendered_text)
 
-Quanto mais alto o NPS, maior é a satisfação dos clientes e maior a tendência de recomendação da empresa para amigos e familiares.
-
-#### Como calcular o NPS?
-
-O calculo da nota do NPS é feito da seguinte forma:
-
-- NPS = % de promotores - % de detratores
-
-Onde:
-
-- % de promotores = (total de promotores / total de manifestações) * 100
-- % de detratores = (total de detratores / total de manifestações) * 100
-
-
-#### Extratificando o período {input_periodo}:
-""")
-    st.subheader(f"")
     st.table(df_nps)
 
 
 with st.expander("Manifestações por tipo", expanded=True):
-    tab_tipos = st.tabs(["Manifestações por setores", f"Elogios ({total_elogios})", f"Sugestões ({total_sugestoes})", f"Reclamações ({total_reclamacoes})"])
+    
+    tab_setores = "Manifestações por setores"
+    tab_elogios = f"Elogios ({total_elogios})"
+    tab_sugestoes = f"Sugestões ({total_sugestoes})"
+    tab_reclamacoes = f"Reclamações ({total_reclamacoes})"
+    tab_sem_opiniao = f"Sem Opinião ({total_sem_opiniao})"
+    tab_todos_dados = f"Todos os dados ({len(df_full)})"
+    
+    tab_tipos = st.tabs([
+        tab_setores, 
+        tab_elogios,
+        tab_sugestoes,
+        tab_reclamacoes,
+        tab_sem_opiniao,
+        tab_todos_dados
+    ])
     with tab_tipos[0]:
+        st.plotly_chart(grafico_composicao_setores(df_grupos_locais), use_container_width=True)
         st.table(df_grupos_locais)
+        st.table(agrupar_por_setor(df)[['local', 'elogio', 'sugestao', 'reclamacao', 'sem opinião', 'total', 'str_proporcao']])
         
     with tab_tipos[1]:
+        st.write('Relação dos registros de elogios dos usuários')
         st.table(df_elogios)
 
     with tab_tipos[2]:
+        st.write('Relação dos registros de sugestões dos usuários')
         st.table(df_sugestao)
 
     with tab_tipos[3]:
+        st.write('Relação dos registros de reclamações dos usuários')
         st.table(df_reclamacao)
 
+    with tab_tipos[4]:
+        st.write('Relação dos registros sem opinião dos usuários')
+        st.table(df_sem_opiniao)
 
+    with tab_tipos[5]:
+        st.write('Relação de todos os registros reportados pelos usuários')
+        st.table(df_full)
 
-
+with st.expander("Extratificação por setor"):
+    for grupo in df_grupos_locais['local'].unique():
+        st.write(f"<h4 style='color: firebrick'>{grupo}</h4>", unsafe_allow_html=True)
+        
+        st.write(f"<h6 style='color: #6f6f6f;'>Resumo do setor</h6>", unsafe_allow_html=True)
+        df_setor = agrupar_por_setor(df).query("local == @grupo", engine="python")
+        st.table(df_setor)
+        
+        st.write(f"<h6 style='color: #6f6f6f;'>Registros das manifestações dos usuários</h6>", unsafe_allow_html=True)
+        st.table(df.query("local == @grupo", engine="python").drop(['tipo', 'ano', 'mes', 'periodo'], axis=1))

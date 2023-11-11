@@ -4,20 +4,27 @@
 import os
 import re
 import time
-import requests
-import pandas as pd
-import numpy as np
-import streamlit as st
+import requests # pip install requests
+import pandas as pd # pip install pandas
+import numpy as np # pip install numpy
+import streamlit as st # pip install streamlit
 from datetime import datetime
 # from unidecode import unidecode
-from rich.console import Console
+from rich.console import Console # pip install rich
 from io import StringIO, BytesIO
-import matplotlib.pyplot as plt
-import plotly.express as px
+import matplotlib.pyplot as plt # pip install matplotlib
+import plotly.express as px # pip install plotly
 import plotly.graph_objects as go
+import seaborn as sns # pip install seaborn
+
 
 local_data_filename = 'data/data.parquet'
 local_nps_filename = 'data/nps.parquet'
+
+# ! TODO: remover essa linha apos finalizar o desenvolvimento
+if os.path.exists('data'):
+    os.system('rm -rf data')
+
 
 # verifica se a pasta "data" existe, se não existir, cria
 if not os.path.exists('data'):
@@ -64,6 +71,11 @@ def download_data():
         df['mes'] = df['data'].dt.month
         df['ano_mes'] = df['data'].dt.strftime('%Y/%m')
         
+        # classificar a nota do nps
+        df['classe'] = np.where(df['nps'] >= 9, 'promotor', np.where(df['nps'] >= 7, 'neutro', 'detrator'))
+        # alterar a ordem da coluna classe para ficar na 3a posição
+        df = df[['data', 'local', 'nps', 'classe', 'tipo', 'elogio', 'sugestao', 'reclamacao', 'nome', 'telefone', 'email', 'ano', 'mes', 'ano_mes']]
+        
         # ordenar por data
         df.sort_values(by=['data'], inplace=True, ascending=False)
         
@@ -101,24 +113,48 @@ periodos = df['ano_mes'].unique()
 locais = df['local'].unique()
 
 df_nps = pd.DataFrame(columns=[
-        'ano_mes', 'nps', 'promotores', 'percentual_promotores', 
+        'ano_mes', 'nps', 'classificacao', 'total', 'promotores', 'percentual_promotores',
         'neutros', 'percentual_neutros', 'detratores', 'percentual_detratores'
     ])
-if not os.path.exists(local_nps_filename):
-    print('- Calculando o NPS')
+
+if os.path.exists(local_nps_filename):
+    console.log('- Obtendo o NPS em cache')
+    df_nps = pd.read_parquet(local_nps_filename)
+else:
+    console.log('- Calculando o NPS')
     # para cada periodo, calcular o nps
     for periodo in periodos:
         df_periodo = df.query("ano_mes == @periodo", engine="python")
+        
+        # quantificar os promotores, neutros e detratores
         df_promotores = df_periodo.query("nps >= 9", engine="python")
         df_neutros = df_periodo.query("nps >= 7 and nps <= 8", engine="python")
         df_detratores = df_periodo.query("nps <= 6", engine="python")
-        percentual_promotores = len(df_promotores) / len(df_periodo)
-        percentual_neutros = len(df_neutros) / len(df_periodo)
-        percentual_detratores = len(df_detratores) / len(df_periodo)
+        
+        # calcular as proporções
+        total_manifestacoes = len(df_periodo)
+        percentual_promotores = (len(df_promotores) / total_manifestacoes)
+        percentual_neutros = (len(df_neutros) / total_manifestacoes)
+        percentual_detratores = (len(df_detratores) / total_manifestacoes)
+        
+        # calcular o score
         score_nps = percentual_promotores - percentual_detratores
+        
+        # classificar o score
+        if score_nps >= 0.75:
+            classificacao = 'Excelência'
+        elif score_nps >= 0.5:
+            classificacao = 'Qualidade'
+        elif score_nps >= 0.25:
+            classificacao = 'Aperfeiçoamento'
+        else:
+            classificacao = 'Crítica'
+        
         nps_dict = {
             'ano_mes': periodo,
-            'nps': score_nps,
+            'nps': round(score_nps * 100, 2),
+            'classificacao': classificacao,
+            'total': total_manifestacoes,
             'promotores': len(df_promotores),
             'percentual_promotores': f'{round(percentual_promotores * 100, 2)}%',
             'neutros': len(df_neutros),
@@ -128,32 +164,70 @@ if not os.path.exists(local_nps_filename):
         }
         df_nps = pd.concat([df_nps, pd.DataFrame([nps_dict])], ignore_index=True)
     # armazenar em cache
-    print('- Armazenando o NPS em cache')
+    console.log('- Armazenando o NPS em cache')
     df_nps.to_parquet(local_nps_filename, index=False)
 
-# st.write(df)
-# st.write(df.columns)
+# imprimindo o nps no console
+console.log(df_nps)
+
+# SIDEBAR ============================================================================================================
 with st.sidebar.title("Filtros"):
     input_periodo = st.sidebar.selectbox("Qual período você deseja consultar?", periodos)
     input_local = st.sidebar.multiselect("Local informado pelo usuário", locais, default=locais)
 
 
-# aplicando filtros nos dados
+# aplicando filtros nos dados ========================================================================================
 df = df.query("ano_mes == @input_periodo and local in @input_local", engine="python")
+df_nps = df_nps.query("ano_mes == @input_periodo", engine="python")
 df_elogios = df.query("not elogio.isna()", engine="python").drop(['tipo', 'sugestao', 'reclamacao', 'ano', 'mes', 'ano_mes'], axis=1)
 df_sugestao = df.query("not sugestao.isna()", engine="python").drop(['tipo', 'elogio', 'reclamacao', 'ano', 'mes', 'ano_mes'], axis=1)
 df_reclamacao = df.query("not reclamacao.isna()", engine="python").drop(['tipo', 'elogio', 'sugestao', 'ano', 'mes', 'ano_mes'], axis=1)
 
+# agrupar para cada local e totalizar a quantidade de Elogios, Sugestões e Reclamações em um único dataframe
+df_grupos_locais = df.groupby(['local']).agg({
+    'elogio': 'count',
+    'sugestao': 'count',
+    'reclamacao': 'count'
+}).reset_index()
+# definir a coluna "local" como index
+df_grupos_locais.set_index('local', inplace=True)
 
+# Defina uma paleta de cores usando seaborn
+color_palette = sns.color_palette("Blues", as_cmap=True)
+
+# Aplique as cores com base nos valores
+df_grupos_locais_styled = df_grupos_locais.style.background_gradient(cmap=color_palette, axis=0)
+
+
+console.log(df_grupos_locais)
+
+
+total_manifestacoes = len(df)
+total_elogios = len(df_elogios)
+total_sugestoes = len(df_sugestao)
+total_reclamacoes = len(df_reclamacao)
+
+# obter o "nps" da primeira linha
+nota_nps = df_nps['nps'].iloc[0]
+classificacao_nps = df_nps['classificacao'].iloc[0]
+
+# apresentação do nps ================================================================================================
 indicadores = st.columns(4)
 with indicadores[0]:
-    st.metric(label="Total Manifestações", value=len(df))
+    st.metric(label="NPS", value=nota_nps)
 with indicadores[1]:
-    st.metric(label="Total Elogios", value=len(df_elogios))
+    st.metric(label="Zona de classificação", value=classificacao_nps)
+
+# apresentação quantitativa dos dados ================================================================================
+indicadores = st.columns(4)
+with indicadores[0]:
+    st.metric(label="Total Manifestações", value=total_manifestacoes)
+with indicadores[1]:
+    st.metric(label="Total Elogios", value=total_elogios)
 with indicadores[2]:
-    st.metric(label="Total Sugestões", value=len(df_sugestao))
+    st.metric(label="Total Sugestões", value=total_sugestoes)
 with indicadores[3]:
-    st.metric(label="Total Reclamações", value=len(df_reclamacao))
+    st.metric(label="Total Reclamações", value=total_reclamacoes)
 
 
 graficos = st.columns([4,2])
@@ -219,20 +293,52 @@ with graficos[1]:
 
 
 
-with st.expander("NPS: Net Promoter Score", expanded=True):
-    st.write('NPS: Net Promoter Score')
-    st.dataframe(df_nps)
+# with st.expander("NPS: Net Promoter Score", expanded=True):
+with st.expander("NPS", expanded=False):
+    st.write(f"""#### O que é o NPS?  
+O Net Promoter Score (NPS) é uma metodologia de satisfação de clientes desenvolvida para avaliar o grau de fidelidade dos clientes de qualquer perfil de empresa.
+Para calcular o NPS, é realizada uma única pergunta ao cliente: “Em uma escala de 0 a 10, o quanto você indicaria nossa empresa para um amigo?”.
+
+A partir da resposta, os clientes são divididos em 3 categorias:
+
+- Notas de 0 a 6: Detratores
+- Notas de 7 a 8: Neutros
+- Notas de 9 a 10: Promotores
+
+O cálculo do NPS é feito subtraindo o percentual de clientes detratores do percentual de clientes promotores. O resultado varia de -100 a 100.
+
+Quanto mais alto o NPS, maior é a satisfação dos clientes e maior a tendência de recomendação da empresa para amigos e familiares.
+
+#### Como calcular o NPS?
+
+O calculo da nota do NPS é feito da seguinte forma:
+
+- NPS = % de promotores - % de detratores
+
+Onde:
+
+- % de promotores = (total de promotores / total de manifestações) * 100
+- % de detratores = (total de detratores / total de manifestações) * 100
+
+
+#### Extratificando o período {input_periodo}:
+""")
+    st.subheader(f"")
+    st.table(df_nps)
 
 
 with st.expander("Manifestações por tipo", expanded=True):
-    tab_tipos = st.tabs(["Elogios", "Sugestões", "Reclamações"])
+    tab_tipos = st.tabs(["Manifestações por setores", f"Elogios ({total_elogios})", f"Sugestões ({total_sugestoes})", f"Reclamações ({total_reclamacoes})"])
     with tab_tipos[0]:
+        st.table(df_grupos_locais)
+        
+    with tab_tipos[1]:
         st.table(df_elogios)
 
-    with tab_tipos[1]:
+    with tab_tipos[2]:
         st.table(df_sugestao)
 
-    with tab_tipos[2]:
+    with tab_tipos[3]:
         st.table(df_reclamacao)
 
 

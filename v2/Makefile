@@ -1,2 +1,2 @@
 run:
-	streamlit run app_streamlit.py --server.runOnSave true
+	clear && streamlit run app_streamlit.py --server.runOnSave true

@@ -1,14 +1,12 @@
-# Planilha Editavel Google Sheets: <https://docs.google.com/spreadsheets/d/1ulLsJgPzUlE5LGXyx2r_uAQMeJhToK9acA6SaumntVA/edit?resourcekey#gid=25369857>
-# Formulario: <https://docs.google.com/forms/d/e/1FAIpQLSf5aE3ymUu7xF64N18XI0Iv-MNtxj3Avw909N5wvs-XVZzJTw/viewform>
-
 import os
-import re
 import time
+import json
+import base64
 import requests # pip install requests
 import pandas as pd # pip install pandas
 import numpy as np # pip install numpy
 import streamlit as st # pip install streamlit
-from io import StringIO, BytesIO
+from io import BytesIO
 from datetime import datetime, timedelta
 from rich.console import Console # pip install rich
 import matplotlib.pyplot as plt # pip install matplotlib
@@ -17,491 +15,549 @@ import plotly.graph_objects as go
 import seaborn as sns # pip install seaborn
 from jinja2 import Template  # pip install Jinja2
 
+if 'input_visualizacao' not in st.session_state:
+    st.session_state['input_visualizacao'] = 'Institucional'
+if 'input_periodo' not in st.session_state:
+    st.session_state['input_periodo'] = None
+if 'input_setor' not in st.session_state:
+    st.session_state['input_setor'] = []
 
+class Log():
+    def __init__(self):
+        self.console = Console()
 
-local_data_filename = 'data/data.parquet'
-local_nps_filename = 'data/nps.parquet'
+    def debug(self, message):
+        self.console.log(f'[magenta dim]debug[/] {message}')
+    def info(self, message):
+        self.console.log(f'[green]info[/] {message}')
+    def warning(self, message):
+        self.console.log(f'[yellow]warn[/] {message}')
+    def error(self, message):
+        self.console.log(f'[red]error[/] {message}')
+log = Log()
 
-# ! TODO: remover essa linha apos finalizar o desenvolvimento
-if os.path.exists('data'):
-    os.system('rm -rf data')
-
-
-# verifica se a pasta "data" existe, se não existir, cria
-if not os.path.exists('data'):
-    os.makedirs('data')
-
-url_formulario = 'https://docs.google.com/forms/d/e/1FAIpQLSf5aE3ymUu7xF64N18XI0Iv-MNtxj3Avw909N5wvs-XVZzJTw/viewform'
-hospital_nome = "Hospital Estadual de Doenças Tropicais"
-console = Console()
-
-st.set_page_config(
-    page_title="HDT PSAU v2",
-    page_icon=':hospital:',
-    layout="wide",
-    # layout="centered",
-    initial_sidebar_state="auto",
-    menu_items=None)
-
-st.markdown("""
-    <style>
-    #MainMenu {visibility: hidden; }
-    footer {visibility: hidden; }
-    header {visibility: hidden; }
-    </style>""", unsafe_allow_html=True)
-
-def download_data():
-    url = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQnAgS3VcuLGyS6sLSCVo8d-_fT2E-X4L1rEYm6iRF8uYxkqfiIPaAgRtriSySK-lbH07fBysH92x9d/pub?gid=25369857&single=true&output=csv'
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0',
-        'Accept-Charset': 'utf-8'
-    }
-    console.log(f"Obtendo dados de {url}")
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        df = pd.read_csv(BytesIO(response.content), sep=',')
+class DataProcessor:
+    def __init__(self):
+        self.etl_log_filename = 'data/etl_log.json'
+        self.raw_data_filename = 'data/raw_data.csv'
+        self.clean_data_filename = 'data/clean_data.parquet'
+        self.clean_data_periodos_filename = 'data/clean_data_periodos.parquet'
+        self.clean_nps_data_filename = 'data/clena_nps.parquet'
+        self.url_raw_data = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQnAgS3VcuLGyS6sLSCVo8d-_fT2E-X4L1rEYm6iRF8uYxkqfiIPaAgRtriSySK-lbH07fBysH92x9d/pub?gid=25369857&single=true&output=csv'
+        self.ttl_tempo_cache = 1 * 60 * 60 # 1 hora
         
-        # renomear colunas
-        df.columns = ["data", "local", "nps", "tipo", "elogio", "sugestao", "reclamacao", "nome", "telefone", "email"]
+        self.df = None
+        self.df_periodos = None
+        
+        # garantir que a pasta data exista
+        if not os.path.exists('data'):
+            os.makedirs('data')
 
-        # converter data para o tipo datetime
-        df['data'] = pd.to_datetime(df['data'], format='%d/%m/%Y %H:%M:%S')
-        
-        df['local'] = df['local'].str.strip().str.upper()
-        
-        df['com_opiniao'] = np.where(df['elogio'].notna() | df['sugestao'].notna() | df['reclamacao'].notna(), 1, 0)
-        df['sem_opiniao'] = np.where(df['elogio'].isna() & df['sugestao'].isna() & df['reclamacao'].isna(), 1, 0)
-        
-        # criar coluna de ano, mes e "ano/mes"
-        df['ano'] = df['data'].dt.year
-        df['mes'] = df['data'].dt.month
-        df['periodo'] = df['data'].dt.strftime('%Y/%m')
-        
-        # deferminar a tipificação da manifestação
-        df['tipo'] = np.where(df['elogio'].notna(), 'elogio', np.where(df['sugestao'].notna(), 'sugestao', np.where(df['reclamacao'].notna(), 'reclamacao', 'sem opinião')))
-        
-        # classificar a nota do nps
-        df['classe'] = np.where(df['nps'] >= 9, 'promotor', np.where(df['nps'] >= 7, 'neutro', 'detrator'))
-        
-        # criar o campo 'flag' com bolinha verde se a classificação for 'promotor', azul se for 'neutro' e vermelha se for 'detrator'
-        df['flag'] = np.where(df['classe'] == 'promotor', '🟢', np.where(df['classe'] == 'neutro', '🔵', '🔴'))
-        
-        # alterar a ordem da coluna classe para ficar na 3a posição
-        df = df[[
-            'data', 'local', 'nps', 'classe', 'flag', 'tipo', 'elogio', 
-            'sugestao', 'reclamacao', 'com_opiniao', 'sem_opiniao', 'nome', 
-            'telefone', 'email', 'ano', 'mes', 'periodo'
-        ]]
-        
-        # ordenar por data
-        df.sort_values(by=['data'], inplace=True, ascending=False)
-        
-        # estabelendo o valor padrão para os campos vazios
-        df.fillna('-', inplace=True)
+    def download_raw_data(self, url):
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0',
+            'Accept-Charset': 'utf-8'
+        }
+        try:
+            log.debug("<ETL> [dim]Adiquirindo raw data")
+            df = None
+            response = None
+            error = None
+            
+            response = requests.get(url, headers=headers)
+            if response and response.status_code == 200:
+                log.debug("<ETL> [dim]Download realizado com sucesso")
+                try:
+                    df = pd.read_csv(BytesIO(response.content), sep=',')
+                    
+                    log.debug("<ETL> [dim]Armazenando dados brutos[/]")
+                    df.to_csv(self.raw_data_filename, index=False)
+                except Exception as e:
+                    log.error(f'<ETL> [yellow]FALHA AO LER DADOS:[/] [red]{e}')
+                    error = e
+        except Exception as e:
+            log.error(f'<ETL> [yellow]FALHA DOWNLOAD:[/] [red]{e}')
+            error = e
+        finally:
+            encoded_content = base64.b64encode(response.content).decode('utf-8') if (response and response.status_code == 200) else None
+            with open(self.etl_log_filename, 'w') as f:
+                json_data = {
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'status': 'success' if response and response.status_code == 200 else 'error',
+                    'response': {
+                        'url': url,
+                        'status_code': response.status_code if response else None,
+                        'headers': dict(response.headers) if response else None,
+                        'content': encoded_content,
+                    },
+                }
+                if error:
+                    json_data['error'] = str(error)
+                f.write(json.dumps(json_data, indent=4))
 
-        # armazenar em cache
-        df.to_parquet(local_data_filename, index=False)
+        return df
+
+    def process_and_cleaning_data(self, df):
+        # Restante do código de processamento
+        log.debug("<ETL> [dim]Processando e transformando os dados brutos")
+        try:
+            df.columns = [
+                "data", "setor", "nps", "tipo", "elogio", 
+                "sugestao", "reclamacao", "nome", "telefone", 
+                "email"
+            ]
+
+            # converter data para o tipo datetime
+            df['data'] = pd.to_datetime(df['data'], format='%d/%m/%Y %H:%M:%S')
+            df['dia'] = df['data'].dt.date
+            
+            df['setor'] = df['setor'].str.strip().str.upper()
+            
+            # df['com_opiniao'] = np.where(df['elogio'].notna() | df['sugestao'].notna() | df['reclamacao'].notna(), 1, 0)
+            # df['sem_opiniao'] = np.where(df['elogio'].isna() & df['sugestao'].isna() & df['reclamacao'].isna(), 1, 0)
+
+            # criar coluna de ano, mes e "ano/mes"
+            df['ano'] = df['data'].dt.year
+            df['mes'] = df['data'].dt.month
+            df['periodo'] = df['data'].dt.strftime('%Y/%m')
+            
+            # deferminar a tipificação da manifestação
+            df['tipo'] = np.where(df['elogio'].notna(), 'elogio', np.where(df['sugestao'].notna(), 'sugestao', np.where(df['reclamacao'].notna(), 'reclamacao', 'preferiu nao informar')))
+            df['manifestacao'] = np.where(df['elogio'].notna(), df['elogio'], np.where(df['sugestao'].notna(), df['sugestao'], np.where(df['reclamacao'].notna(), df['reclamacao'], '-')))
+            
+            # classificar a nota do nps
+            df['classe'] = np.where(df['nps'] >= 9, 'promotor', np.where(df['nps'] >= 7, 'neutro', 'detrator'))
+            
+            df['nome'] = df['nome'].str.strip().str.title()
+            df['email'] = df['email'].str.strip().str.lower()
+            # remover todos caracteres não numéricos do campo telefone
+            df['telefone'] = df['telefone'].str.replace(r'\D', '', regex=True)
+            
+            
+            # criar o campo 'flag' com bolinha verde se a classificação for 'promotor', azul se for 'neutro' e vermelha se for 'detrator'
+            df['flag'] = np.where(df['classe'] == 'promotor', '🟢', np.where(df['classe'] == 'neutro', '🔵', '🔴'))
+            
+            # alterar a ordem da coluna classe para ficar na 3a posição
+            df = df[[
+                'periodo', 'dia',
+                'ano', 'mes',
+                'data', 'setor', 'nps', 'classe', 
+                'flag', 'tipo', 'manifestacao',
+                'nome', 'telefone', 'email', 
+                # 'elogio', 'sugestao', 'reclamacao', 
+                # 'com_opiniao', 'sem_opiniao',
+            ]]
+
+            # index começando em 1
+            df.index = np.arange(1, len(df) + 1)
+            
+            # ordenar inversamente por data
+            df = df.sort_values(by=['data'], ascending=False)
+            
+            # estabelendo o valor padrão para os campos vazios
+            df = df.fillna('-')
+
+            # armazenar em cache
+            log.debug("<ETL> [dim]Armazenando dados em cache[/]")
+            df.to_parquet(self.clean_data_filename, index=False)
+        except Exception as e:
+            log.error(f'<ETL> [yellow]ERROR ETL:[/] [red]{e}[/]')
+            st.error('Falha ao processar a preparação dos dados. Tente novamente mais tarde ou procure apoio do departamento de TI.')
+            return None
+        
+        return df
+
+    def process_statistics(self, df):
+        log.debug("<ETL> [dim]Processando estatísticas...")
+        if df is None or df.empty:
+            self.df_periodos = None
+        try:
+            df_temp = (
+                df.groupby(['periodo', 'tipo','setor'])
+                .agg({ 'data': 'count' })
+                .reset_index()
+                .rename(columns={'data': 'n'})
+            )
+            # print(df_temp)
+            # self.df_temp.info()
+            
+            log.debug("<ETL> [dim]Pivotando dados estatísticos...")
+            df_pivot = (
+                df_temp.pivot(
+                    index=['periodo', 'setor'],
+                    columns='tipo',
+                    values='n'
+                )
+                .reset_index()
+            )            
+            df_pivot['total'] = df_pivot[['elogio', 'sugestao', 'reclamacao', 'preferiu nao informar']].sum(axis=1)
+            
+            # calcular o total amostras em cada período
+            df_totais_periodos = (
+                df_pivot.groupby(['periodo'])
+                .agg({ 'total': 'sum' })
+                .reset_index()
+                .rename(columns={'total': 'n_periodo'})
+            )
+            df_totais_periodos['n_periodo'] = df_totais_periodos['n_periodo'].astype(int)
+            # log.debug("<ETL> [red]Totalização por período ==============================")
+            # print(df_totais_periodos)
+            
+            for campo in ['elogio', 'sugestao', 'reclamacao', 'preferiu nao informar', 'total']:
+                if campo in df_pivot.columns:
+                    df_pivot[campo] = df_pivot[campo].fillna(0).astype(int)
+                    
+            df_pivot = (
+                df_pivot.sort_values(by=['periodo', 'setor'], ascending=True)
+            )[['periodo', 'setor', 'elogio', 'sugestao', 'reclamacao', 'preferiu nao informar', 'total']]
+
+            # merge com os totais
+            df_pivot = pd.merge(
+                df_pivot,
+                df_totais_periodos,
+                on='periodo',
+                how='left'
+            )
+            df_pivot['proporcao'] = round(df_pivot['total'] / df_pivot['n_periodo'], 4)
+
+            # index começando em 1
+            df_pivot.index = np.arange(1, len(df_pivot) + 1)
+            
+            log.debug("<ETL> [yellow]Analítico por período ==============================")
+            print(df_pivot)
+
+            self.df_periodos = df_pivot
+            
+            if self.df_periodos is not None:
+                self.df_periodos.to_parquet(self.clean_data_periodos_filename, index=False)
+                log.debug("<ETL> [green dim]Estatísticas processadas com sucesso!")
+        except Exception as e:
+            log.error(f'<ETL> [yellow]ERROR ETL STATISTICS:[/] [red]{e}[/]')
+            st.error('Falha ao processar as estatísticas. Tente novamente mais tarde ou procure apoio do departamento de TI.')
+        
+        return self.df_periodos
+    
+    def get_data(self):
+        log.debug("[dim]Getting data")
+        if os.path.exists(self.clean_data_filename):
+            idade_arquivo = time.time() - os.path.getmtime(self.clean_data_filename)
+            if idade_arquivo > self.ttl_tempo_cache:
+                log.debug("<ETL> [yellow dim]Cache expired[/]")
+                os.remove(self.clean_data_filename)
+
+        if os.path.exists(self.clean_data_filename):
+            df = pd.read_parquet(self.clean_data_filename)
+        else:
+            log.debug("<ETL> [yellow]Iniciando ETL")
+            df_raw = self.download_raw_data(self.url_raw_data)
+            df = self.process_and_cleaning_data(df_raw)
+            self.process_statistics(df)
+            log.debug("<ETL> [green]ETL concluido com sucesso!")
+
         return df
     
-    raise Exception('Falha ao obter dados. Entre em contato com a equipe de TI.')
-
-# @st.cache_data(ttl=60)
-def get_data():
+    def get_data_by_periodos(self):
+        return self.df_periodos
     
-    if os.path.exists(local_data_filename):
-        idade_arquivo = time.time() - os.path.getmtime(local_data_filename)
-        # remover arquivo se tiver mais de 5 minutos
-        console.log(f"{local_data_filename} criado há {round(idade_arquivo, 2)} min, criado em: {datetime.fromtimestamp(os.path.getmtime(local_data_filename)).strftime('%d/%m/%Y %H:%M')}")
-        if (idade_arquivo > 1 * 60 * 60):
-            os.remove(local_data_filename)
-
-    if os.path.exists(local_data_filename):
-        df = pd.read_parquet(local_data_filename)
-    else:
-        df = download_data()
-    
-    return df
-
-def agrupar_por_setor(df):
-    # agrupar para cada local e totalizar a quantidade de Elogios, Sugestões e Reclamações em um único dataframe
-    df_grupos_locais = df.groupby(['tipo','local']).agg({
-        'data': 'count',
-    }).reset_index()
-    # sort por tipo
-    # st.write(df_grupos_locais)
-
-    df_grupos_locais_pivot = df_grupos_locais.pivot(index='local', columns='tipo', values='data').reset_index()
-    df_grupos_locais_pivot = df_grupos_locais_pivot[['local', 'elogio', 'sugestao', 'reclamacao', 'sem opinião']]
-    df_grupos_locais_pivot['total'] = df_grupos_locais_pivot[['elogio', 'sugestao', 'reclamacao', 'sem opinião']].sum(axis=1)
-    df_grupos_locais_pivot['proporcao'] = round(df_grupos_locais_pivot['total'] / len(df) * 100, 1)
-
-    # Substitua valores NaN por 0 (se necessário)
-    df_grupos_locais_pivot = df_grupos_locais_pivot.fillna(0)
-    
-    df_grupos_locais_pivot['elogio'] = df_grupos_locais_pivot['elogio'].astype(int)
-    df_grupos_locais_pivot['sugestao'] = df_grupos_locais_pivot['sugestao'].astype(int)
-    df_grupos_locais_pivot['reclamacao'] = df_grupos_locais_pivot['reclamacao'].astype(int)
-    df_grupos_locais_pivot['sem opinião'] = df_grupos_locais_pivot['sem opinião'].astype(int)
-    df_grupos_locais_pivot['total'] = df_grupos_locais_pivot['total'].astype(int)
-    df_grupos_locais_pivot['str_proporcao'] = df_grupos_locais_pivot['proporcao'].astype(str) + '%'
-
-    return df_grupos_locais_pivot
-
-def calcular_nps():
-    df_nps = pd.DataFrame(columns=[
-        'periodo', 'nps', 'classificacao', 'total', 'promotores', 'percentual_promotores',
-        'neutros', 'percentual_neutros', 'detratores', 'percentual_detratores'
-    ])
-
-    if os.path.exists(local_nps_filename):
-        console.log('- Obtendo o NPS em cache')
-        df_nps = pd.read_parquet(local_nps_filename)
-    else:
-        console.log('- Calculando o NPS')
-        # para cada periodo, calcular o nps
-        for periodo in periodos:
-            df_periodo = df.query("periodo == @periodo", engine="python")
-            
-            # quantificar os promotores, neutros e detratores
-            df_promotores = df_periodo.query("nps >= 9", engine="python")
-            df_neutros = df_periodo.query("nps >= 7 and nps <= 8", engine="python")
-            df_detratores = df_periodo.query("nps <= 6", engine="python")
-            
-            # calcular as proporções
-            total_manifestacoes = len(df_periodo)
-            percentual_promotores = (len(df_promotores) / total_manifestacoes)
-            percentual_neutros = (len(df_neutros) / total_manifestacoes)
-            percentual_detratores = (len(df_detratores) / total_manifestacoes)
-            
-            # calcular o score
-            score_nps = percentual_promotores - percentual_detratores
-            
-            # classificar o score
-            if score_nps >= 0.75:
-                classificacao = 'Excelência'
-            elif score_nps >= 0.5:
-                classificacao = 'Qualidade'
-            elif score_nps >= 0.25:
-                classificacao = 'Aperfeiçoamento'
-            else:
-                classificacao = 'Crítica'
-            
-            nps_dict = {
-                'periodo': periodo,
-                'nps': round(score_nps * 100, 2),
-                'classificacao': classificacao,
-                'total': total_manifestacoes,
-                'promotores': len(df_promotores),
-                'percentual_promotores': f'{round(percentual_promotores * 100, 2)}%',
-                'neutros': len(df_neutros),
-                'percentual_neutros': f'{round(percentual_neutros * 100, 2)}%',
-                'detratores': len(df_detratores),
-                'percentual_detratores': f'{round(percentual_detratores * 100, 2)}%'
+class Dashboard:
+    def __init__(self, data_processor):
+        self.data_processor = data_processor
+        self.df = None
+        self.nps_dict = {}
+        
+    def set_layout(self):
+        """Configurando o layout do dashboard no Streamlit"""
+        st.set_page_config(
+            page_title="HDT PSAU v2",
+            page_icon=':hospital:',
+            layout="wide",
+            # layout="centered",
+            initial_sidebar_state="auto",
+            menu_items=None
+        )
+        st.markdown("""
+            <style>
+            #MainMenu {visibility: hidden; }
+            footer {visibility: hidden; }
+            header {visibility: hidden; }
+            th {
+                text-align: center !important;
+                background-color: #f8f8f8;
+                color: black !important;
+                text-transform: uppercase;
             }
-            df_nps = pd.concat([df_nps, pd.DataFrame([nps_dict])], ignore_index=True)
-        # armazenar em cache
-        console.log('- Armazenando o NPS em cache')
-        df_nps.to_parquet(local_nps_filename, index=False)
-    return df_nps
+            </style>""", unsafe_allow_html=True
+        )
 
-def grafico_evolucao_diario(df):
-    # criar um grafico com plotly monstrando a quantidade de manifestações por dia
-    # df_por_data = df.groupby(df['data'].dt.date).size().reset_index(name='total')
+    def load_data(self):
+        self.df = self.data_processor.get_data()
     
-    data_minima = df['data'].min().date()
-    data_maxima = datetime.today().date()
-    
-    # Crie um DataFrame com todas as datas no intervalo desejado
-    datas_todas = pd.date_range(start=data_minima, end=data_maxima, freq='D').date
-    df_datas_todas = pd.DataFrame({'data': datas_todas})
-    df_por_data = df_datas_todas.merge(df.groupby(df['data'].dt.date).size().reset_index(name='total'), how='left', on='data')
+    def load_nps_data(self):
+        self.nps_dict = self.calculate_nps(self.df)
 
-    df_por_data['total'].fillna(0, inplace=True) # substituir os valores nulos por zero
-
-    # st.write(df_por_data)
-
-
-    # Criando o gráfico de linhas
-    fig = px.line(df_por_data, x='data', y='total', markers=True, labels={'total': 'Quantidade Manifestações', 'data': 'Data'})
-
-    maximo_apurados_em_uma_data = df_por_data['total'].max()
-    if maximo_apurados_em_uma_data <= 10:
-        ticks_espacamento = 1
-    else:
-        ticks_espacamento = 10 #int(maximo_apurados_em_uma_data / 4)
-    st.write(f'ticks_espacamento: {ticks_espacamento}, max: {maximo_apurados_em_uma_data}')
-    
-    # Configurando layout
-    fig.update_layout(
-        xaxis_title="",
-        yaxis_title="Total Manifestações",
-        title="Evolução da quantidade de manifestações por dia",
-        font=dict(
-            family="Arial",
-            size=12,
-            color="#7f7f7f"
-        ),
-        yaxis=dict(
-            tickmode='linear',
-            tick0=0,
-            dtick=ticks_espacamento
-        ),
-        height=350
-    )
-
-    # Formatando a data
-    fig.update_layout(xaxis=dict(tickformat='%d\n%b-%Y', tickmode='linear'))
-
-    # Adicionando pontos mais evidentes
-    fig.update_traces(marker=dict(size=8, line=dict(width=2, color='DarkSlateGray')))
-    
-    return fig
-
-def grafico_composicao_setores(df):
-    df = df.sort_values('Total de manifestações', ascending=False)
-    ordem_categorias = df['local'].tolist()
-    
-
-    # Crie um gráfico de barras com Plotly Express
-    fig = px.bar(
-        df,
-        x='local',
-        y='% Composição',
-        title='Proporção das manifestações dos usuários por setor',
-        labels={'% Composição': 'Proporção de Composição', 'local': 'Setores'},
-        hover_data=['Elogios', 'Sugestões', 'Reclamações', 'Total de manifestações', 'Com Opinião', 'Sem Opinião'],
-        color_continuous_scale='Blues',
-        category_orders={'local': ordem_categorias}  # Defina a ordem das categorias
-    )
-    
-    # definir o eixo y como percentual
-    # fig.update_yaxes(tickformat="%")
-
-    # # Exiba o gráfico
-    # fig.show()
-    return fig
-
-
-
-
-st.title('Dashboard - PSAU')
-st.subheader('Pesquisa de Satisfação dos Usuários')
-st.markdown(f'<h5 style="color: #6880c7;">{hospital_nome}</h5>', unsafe_allow_html=True)
-# st.markdown(f'<h2 style="color: firebrick;text-align:center;border-bottom: 4px solid firebrick;margin-bottom: 1rem;padding: .5rem;">{sel_setor.upper()}<>
-
-
-df = get_data()
-df_full = df.copy()
-periodos = df['periodo'].unique()
-locais = df['local'].unique()
-
-
-with st.spinner('Processando...'):
-    df_nps = calcular_nps()
-
-    # imprimindo o nps no console
-    console.log(df_nps)
-
-# SIDEBAR ============================================================================================================
-with st.sidebar.title("Filtros"):
-    input_visualizacao = st.sidebar.radio("Perspectiva de Visualização", ["Instituciional", "Setorial"], index=0)
-    # st.write(f"Visualização: {input_visualizacao}")
-    input_periodo = st.sidebar.selectbox("Qual período você deseja consultar?", periodos)
-    input_local = st.sidebar.multiselect("Local informado pelo usuário", locais, default=locais)
-
-
-# aplicando filtros nos dados ========================================================================================
-df = df.query("periodo == @input_periodo and local in @input_local", engine="python")
-if df is None or df.empty:
-    st.error("❌ Nenhum dado encontrado para os filtros selecionados. Considere alterar os filtros e tentar novamente.")
-    st.stop()
-
-# separando os dataframes
-df_nps = df_nps.query("periodo == @input_periodo", engine="python")
-df_elogios = df.query("tipo=='elogio'", engine="python").drop(['tipo', 'sugestao', 'reclamacao', 'com_opiniao', 'sem_opiniao', 'ano', 'mes', 'periodo'], axis=1)
-df_sugestao = df.query("tipo=='sugestao'", engine="python").drop(['tipo', 'elogio', 'reclamacao', 'com_opiniao', 'sem_opiniao', 'ano', 'mes', 'periodo'], axis=1)
-df_reclamacao = df.query("tipo=='reclamacao'", engine="python").drop(['tipo', 'elogio', 'sugestao', 'com_opiniao', 'sem_opiniao', 'ano', 'mes', 'periodo'], axis=1)
-df_sem_opiniao = df.query("tipo=='sem opinião'", engine="python").drop(['tipo', 'ano', 'mes', 'elogio', 'sugestao', 'reclamacao', 'com_opiniao', 'sem_opiniao', 'periodo'], axis=1)
-
-
-
-df_grupos_locais = df.groupby(['local']).agg({
-    'elogio': 'count',
-    'sugestao': 'count',
-    'reclamacao': 'count',
-    'com_opiniao': 'count',
-    'sem_opiniao': 'count',
-    'data': 'count',
-}).reset_index()
-
-
-df_grupos_locais.rename(columns={'data': 'total'}, inplace=True)
-
-# calculando proporção do local
-df_grupos_locais['proporcao'] = round(df_grupos_locais['total'] / len(df) * 100, 1)
-df_grupos_locais['proporcao'] = df_grupos_locais['proporcao'].astype(str) + '%'
-# calculando o total de manifestações por grupo
-df_grupos_locais['com_opiniao'] = df_grupos_locais[['elogio', 'sugestao', 'reclamacao']].sum(axis=1)
-df_grupos_locais['sem_opiniao'] = df_grupos_locais['total'] - df_grupos_locais['com_opiniao']
-
-# renomeando
-df_grupos_locais.rename(columns={
-    'elogio': 'Elogios',
-    'sugestao': 'Sugestões',
-    'reclamacao': 'Reclamações',
-    'total': 'Total de manifestações',
-    'proporcao': '% Composição',
-    'com_opiniao': 'Com Opinião',
-    'sem_opiniao': 'Sem Opinião',
-    }, inplace=True)
-
-# definir a coluna "local" como index
-# df_grupos_locais.set_index('local', inplace=True)
-
-# Defina uma paleta de cores usando seaborn
-color_palette = sns.color_palette("Blues", as_cmap=True)
-
-# Aplique as cores com base nos valores
-df_grupos_locais_styled = df_grupos_locais.style.background_gradient(cmap=color_palette, axis=0)
-
-
-# console.log(df_grupos_locais)
-
-
-total_manifestacoes = len(df)
-total_elogios = len(df_elogios)
-total_sugestoes = len(df_sugestao)
-total_reclamacoes = len(df_reclamacao)
-total_sem_opiniao = len(df_sem_opiniao)
-
-# obter o "nps" da primeira linha
-nota_nps = df_nps['nps'].iloc[0]
-classificacao_nps = df_nps['classificacao'].iloc[0]
-
-# apresentação do nps ================================================================================================
-indicadores = st.columns(4)
-with indicadores[0]:
-    st.metric(label="NPS", value=nota_nps)
-with indicadores[1]:
-    st.metric(label="Zona de classificação", value=classificacao_nps)
-
-# apresentação quantitativa dos dados ================================================================================
-indicadores = st.columns(5)
-with indicadores[0]:
-    st.metric(label="Total Manifestações", value=total_manifestacoes)
-with indicadores[1]:
-    st.metric(label="Total Elogios", value=total_elogios)
-with indicadores[2]:
-    st.metric(label="Total Sugestões", value=total_sugestoes)
-with indicadores[3]:
-    st.metric(label="Total Reclamações", value=total_reclamacoes)
-with indicadores[4]:
-    st.metric(label="Total Sem Opinião", value=total_sem_opiniao)
-
-
-graficos = st.columns([4,2])
-with graficos[0]:
-    # criar um grafico com plotly monstrando a quantidade de manifestações por dia
-    st.plotly_chart(grafico_evolucao_diario(df), use_container_width=True)
-
-with graficos[1]:
-    # Supondo que df seja o seu DataFrame
-    df_composicao = df[['elogio', 'sugestao', 'reclamacao']].count().reset_index(name='quantidade')
-    df_composicao.columns = ['Tipo', 'Quantidade']
-    
-    com_opiniao_total = df_composicao['Quantidade'].sum()
-    # st.write(f"com_opiniao_total: {com_opiniao_total}")
-    total_manifestacoes = len(df)
-
-    # Mapeando as cores para cada tipo
-    cores = {'elogio': 'limegreen', 'sugestao': 'royalblue', 'reclamacao': 'firebrick'}
-    df_composicao['Cor'] = df_composicao['Tipo'].map(cores)
-    # st.write(df)
-    # st.write(df_composicao)
-    # Criando o gráfico de pizza com cores personalizadas
-    fig = px.pie(df_composicao, 
-                    values='Quantidade', 
-                    names='Tipo', 
-                    title='Composição das manifestações',
-                    color='Tipo', 
-                    color_discrete_map=cores, 
-                    # hover_data=['Quantidade'],
-                    hole=.3, 
-                    height=400)
-
-    # Exibindo o gráfico no Streamlit
-    st.plotly_chart(fig, use_container_width=True)
-
-
-
-# with st.expander("NPS: Net Promoter Score", expanded=True):
-with st.expander("NPS", expanded=False):
-    
-    
-    # Lê o conteúdo do arquivo de modelo
-    with open('markdown/nps.md', 'r', encoding='utf-8') as f:
-        template_text = f.read()
-
-    # Cria um objeto Template
-    template = Template(template_text)
-
-    # Renderiza o template com variáveis específicas
-    rendered_text = template.render(input_periodo=input_periodo, df_nps=df_nps)
-
-    st.write(rendered_text)
-
-    st.table(df_nps)
-
-
-with st.expander("Manifestações por tipo", expanded=True):
-    
-    tab_setores = "Manifestações por setores"
-    tab_elogios = f"Elogios ({total_elogios})"
-    tab_sugestoes = f"Sugestões ({total_sugestoes})"
-    tab_reclamacoes = f"Reclamações ({total_reclamacoes})"
-    tab_sem_opiniao = f"Sem Opinião ({total_sem_opiniao})"
-    tab_todos_dados = f"Todos os dados ({len(df_full)})"
-    
-    tab_tipos = st.tabs([
-        tab_setores, 
-        tab_elogios,
-        tab_sugestoes,
-        tab_reclamacoes,
-        tab_sem_opiniao,
-        tab_todos_dados
-    ])
-    with tab_tipos[0]:
-        st.plotly_chart(grafico_composicao_setores(df_grupos_locais), use_container_width=True)
-        st.table(df_grupos_locais)
-        st.table(agrupar_por_setor(df)[['local', 'elogio', 'sugestao', 'reclamacao', 'sem opinião', 'total', 'str_proporcao']])
+    def calculate_nps(self, df):
+        # Restante do código de cálculo do NPS
+        detratores = df[df['classe'] == 'detrator']['nps'].count()
+        neutros = df[df['classe'] == 'neutro']['nps'].count()
+        promotores = df[df['classe'] == 'promotor']['nps'].count()
         
-    with tab_tipos[1]:
-        st.write('Relação dos registros de elogios dos usuários')
-        st.table(df_elogios)
-
-    with tab_tipos[2]:
-        st.write('Relação dos registros de sugestões dos usuários')
-        st.table(df_sugestao)
-
-    with tab_tipos[3]:
-        st.write('Relação dos registros de reclamações dos usuários')
-        st.table(df_reclamacao)
-
-    with tab_tipos[4]:
-        st.write('Relação dos registros sem opinião dos usuários')
-        st.table(df_sem_opiniao)
-
-    with tab_tipos[5]:
-        st.write('Relação de todos os registros reportados pelos usuários')
-        st.table(df_full)
-
-with st.expander("Extratificação por setor"):
-    for grupo in df_grupos_locais['local'].unique():
-        st.write(f"<h4 style='color: firebrick'>{grupo}</h4>", unsafe_allow_html=True)
+        qtde_total = detratores + neutros + promotores
         
-        st.write(f"<h6 style='color: #6f6f6f;'>Resumo do setor</h6>", unsafe_allow_html=True)
-        df_setor = agrupar_por_setor(df).query("local == @grupo", engine="python")
-        st.table(df_setor)
+        p_detratores = detratores / qtde_total
+        p_neutros = neutros / qtde_total
+        p_promotores = promotores / qtde_total
         
-        st.write(f"<h6 style='color: #6f6f6f;'>Registros das manifestações dos usuários</h6>", unsafe_allow_html=True)
-        st.table(df.query("local == @grupo", engine="python").drop(['tipo', 'ano', 'mes', 'periodo'], axis=1))
+        score_nps = round((p_promotores - p_detratores) * 100, 2)
+        
+        # zonas de classificação
+        if score_nps < 0:
+            zona = 'Crítica'
+        elif score_nps < 50:
+            zona = 'Aperfeiçoamento'
+        elif score_nps < 75:
+            zona = 'Qualidade'
+        else:
+            zona = 'Excelência'
+        
+        nps_dict = {
+            'detratores': detratores,
+            'p_detratores': f'{p_detratores:.2%}',
+            'neutros': neutros,
+            'p_neutros': f'{p_neutros:.2%}',
+            'promotores': promotores,
+            'p_promotores': f'{p_promotores:.2%}',
+            'total': qtde_total,
+            'score': score_nps,
+            'zona': zona,
+        }
+        return nps_dict
+
+    def get_lista_periodos(self):
+        if self.df is None or self.df.empty:
+            return []
+        if 'periodo' not in self.df.columns:
+            st.error('Estrutura de dados inválida.')
+            return []
+        lista_periodos = self.df['periodo'].unique()
+        return lista_periodos
+
+    def get_lista_setores(self):
+        if self.df is None or self.df.empty:
+            return []
+        if 'setor' not in self.df.columns:
+            st.error('Estrutura de dados inválida.')
+            return []
+        lista_periodos = self.df['setor'].unique()
+        return lista_periodos
+
+    def render_dashboard(self):
+        # st.title('Dashboard - PSAU')
+        st.header('Dashboard - Pesquisa de Satisfação dos Usuários')
+        st.markdown(f'<h4 style="color: #6880c7;">Hospital Estadual de Doenças Tropicais</h4>', unsafe_allow_html=True)
+        main_container = st.empty()
+        
+        with st.spinner('Processando dados...'):
+            self.load_data()
+            self.load_nps_data()
+            
+            if self.df is None:
+                st.error('Falha ao carregar dados. Tente novamente mais tarde ou procure apoio do departamento de TI.')
+                st.stop()
+                return
+
+            with st.sidebar.title("Filtros"):
+                input_visualizacao = st.sidebar.radio("Perspectiva de Visualização", ["Institucional"], index=0)
+                # input_visualizacao = st.sidebar.radio("Perspectiva de Visualização", ["Institucional", "Setorial"], index=0)
+                input_periodo = st.sidebar.selectbox("Qual período você deseja consultar?", self.get_lista_periodos())
+                # input_setor = st.sidebar.multiselect("Setor informado pelo usuário", self.get_lista_setores(), default=self.get_lista_setores())
+            
+            # filtrando os dados
+            df_filtrado = (
+                self.df
+                .copy()
+                .query('periodo == @input_periodo')
+            ).drop(columns=['dia', 'periodo', 'ano', 'mes'])
+            df_filtrado['data'] = df_filtrado['data'].dt.strftime('%d/%m/%Y %H:%M:%S')
+            
+            df_estatisticas_filtrado = (
+                self.data_processor.get_data_by_periodos()
+                .copy()
+                .query('periodo == @input_periodo')
+            ).drop(columns=['periodo', 'n_periodo'])
+            df_estatisticas_filtrado['proporcao'] = df_estatisticas_filtrado['proporcao'].apply(lambda x: f'{x:.2%}')
+            
+            df_manifestacoes_por_dia = (
+                self.df
+                .copy()
+                .query('periodo == @input_periodo')
+                .groupby(['dia'])
+                .agg({ 'dia': 'count' })
+                .rename(columns={'dia': 'n'})
+                .reset_index()
+            )
+            df_manifestacoes_por_setor = (
+                self.df
+                .copy()
+                .query('periodo == @input_periodo')
+                .groupby(['setor'])
+                .agg({ 'setor': 'count' })
+                .rename(columns={'setor': 'n'})
+                .reset_index()
+            )
+            
+            with main_container:
+                with st.container():
+                    st.markdown(f'<br><h5>Período de análise <b style="color: firebrick">{input_periodo}</b></h5>', unsafe_allow_html=True)
+                    tabs = st.tabs(["Visão geral", "Manifestações", 'Por setor', "NPS"])
+                    with tabs[0]:
+                        st.markdown('##### Visão geral das estatísticas do período')
+                        cols = st.columns(5)
+                        with cols[0]:
+                            st.metric(label="Total de manifestações", value=df_estatisticas_filtrado['total'].sum())
+                        with cols[1]:
+                            st.metric(label="Elogios", value=df_estatisticas_filtrado['elogio'].sum())
+                        with cols[2]:
+                            st.metric(label="Sugestões", value=df_estatisticas_filtrado['sugestao'].sum())
+                        with cols[3]:
+                            st.metric(label="Reclamações", value=df_estatisticas_filtrado['reclamacao'].sum())
+                        with cols[4]:
+                            st.metric(label="Preferiu não informar", value=df_estatisticas_filtrado['preferiu nao informar'].sum())
+
+                        st.table(df_estatisticas_filtrado.replace(0, '-'))
+                        st.markdown(f'<small>Quantidade de registros: {len(df_estatisticas_filtrado)}</small>', unsafe_allow_html=True)
+                        
+                        st.markdown('##### Volume de manifestações recebidas por dia')
+                        # # grafico de scatter plot do df_manifestacoes_por_dia
+                        # fig = px.scatter(
+                        #     df_manifestacoes_por_dia,
+                        #     x='dia',
+                        #     y='n',
+                        #     # color='n',
+                        #     # color_continuous_scale='RdBu',
+                        #     size='n',
+                        #     title='Manifestações por dia',
+                        #     labels={
+                        #         'dia': 'Data',
+                        #         'n': 'Quantidade de manifestações',
+                        #     },
+                        #     width=1000,
+                        #     height=400,
+                        # )
+                        # fig.update_layout(
+                        #     margin=dict(l=0, r=0, t=50, b=0),
+                        #     # paper_bgcolor="LightSteelBlue",
+                        # )
+                        # st.plotly_chart(fig, use_container_width=True)
+                        
+                        # criar um grafico de barras com o total de manifestações por dia
+                        fig = px.bar(
+                            df_manifestacoes_por_dia,
+                            x='dia',
+                            y='n',
+                            color='n',
+                            title='Manifestações por dia',
+                            labels={
+                                'dia': 'Data',
+                                'n': 'Quantidade de manifestações',
+                            },
+                            width=1000,
+                            height=400,
+                        )
+                        fig.update_layout(
+                            margin=dict(l=0, r=0, t=50, b=0),
+                            # paper_bgcolor="LightSteelBlue",
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    with tabs[1]:                        
+                        st.markdown('##### Registros das manifestações dos usuários')
+                        tabs_manifestacoes = st.tabs(["Todos", "Elogios", "Sugestões", "Reclamações", "Preferiu não informar"])
+                        with tabs_manifestacoes[0]:
+                            st.table(df_filtrado)
+                            st.markdown(f'<small>Quantidade de registros: {len(df_filtrado)}</small>', unsafe_allow_html=True)
+                        with tabs_manifestacoes[1]:
+                            st.table(df_filtrado[df_filtrado['tipo'] == 'elogio'].drop(['tipo'], axis=1).replace(0, '-'))
+                            st.markdown(f'<small>Quantidade de registros: {len(df_filtrado[df_filtrado["tipo"] == "elogio"])}</small>', unsafe_allow_html=True)
+                        with tabs_manifestacoes[2]:
+                            st.table(df_filtrado[df_filtrado['tipo'] == 'sugestao'].drop(['tipo'], axis=1).replace(0, '-'))
+                            st.markdown(f'<small>Quantidade de registros: {len(df_filtrado[df_filtrado["tipo"] == "sugestao"])}</small>', unsafe_allow_html=True)
+                        with tabs_manifestacoes[3]:
+                            st.table(df_filtrado[df_filtrado['tipo'] == 'reclamacao'].drop(['tipo'], axis=1).replace(0, '-'))
+                            st.markdown(f'<small>Quantidade de registros: {len(df_filtrado[df_filtrado["tipo"] == "reclamacao"])}</small>', unsafe_allow_html=True)
+                        with tabs_manifestacoes[4]:
+                            st.table(df_filtrado[df_filtrado['tipo'] == 'preferiu nao informar'].drop(['tipo'], axis=1).replace(0, '-'))
+                            st.markdown(f'<small>Quantidade de registros: {len(df_filtrado[df_filtrado["tipo"] == "preferiu nao informar"])}</small>', unsafe_allow_html=True)
+                            
+                    with tabs[2]:
+                        # st.markdown('#### Manifestações x Setores')
+                        # input_setor = st.selectbox("Qual setor você deseja consultar?", self.get_lista_setores())
+                        # st.markdown(f'#### {input_setor}')
+                        # st.table(df_filtrado[df_filtrado['setor'] == input_setor].drop(['setor'], axis=1).replace(0, '-'))
+                        # st.markdown('<small><i>Selecione o setor para visualizar as manifestações:</i></small>', unsafe_allow_html=True)
+                        fig = px.bar(
+                            df_manifestacoes_por_setor,
+                            x='setor',
+                            y='n',
+                            color='n',
+                            title='Manifestações por setor',
+                            labels={
+                                'setor': 'Setor',
+                                'n': 'Quantidade de manifestações',
+                            },
+                            width=1000,
+                            height=400,
+                        )
+                        fig.update_layout(
+                            margin=dict(l=0, r=0, t=50, b=0),
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        lista_setores = sorted(list(self.get_lista_setores()))
+                        tabs_setores = st.tabs(lista_setores)
+                        for index, setor in enumerate(tabs_setores):
+                            nome_setor = lista_setores[index]
+                            with tabs_setores[index]:
+                                # st.markdown(f'#### {nome_setor}')
+                                # st.write('conteudo')
+                                cols = st.columns(2)
+                                with cols[0]:
+                                    st.metric(label="Setor", value=nome_setor)
+                                with cols[1]:
+                                    st.metric(label="Total de manifestações", value=df_estatisticas_filtrado[df_estatisticas_filtrado['setor'] == nome_setor]['total'].sum())
+                                st.table(df_filtrado[df_filtrado['setor'] == nome_setor].drop(['setor'], axis=1).replace(0, '-'))
+                                # st.markdown(f'<small>Quantidade de registros: {len(df_estatisticas_filtrado[df_estatisticas_filtrado["setor"] == setor])}</small>', unsafe_allow_html=True)
+                        # for setor in df_estatisticas_filtrado['setor'].unique():
+                        #     with tabs_setores[df_estatisticas_filtrado['setor'].unique().tolist().index(setor)]:
+                        #         st.table(df_estatisticas_filtrado[df_estatisticas_filtrado['setor'] == setor].replace(0, '-'))
+                        #         st.markdown(f'<small>Quantidade de registros: {len(df_estatisticas_filtrado[df_estatisticas_filtrado["setor"] == setor])}</small>', unsafe_allow_html=True)
+                        
+                    with tabs[3]:
+                        st.markdown('##### Net Promoter Score')
+                        cols = st.columns(3)
+                        with cols[0]:
+                            st.metric(label="Score NPS atual", value=self.nps_dict['score'])
+                        # with cols[1]:
+                            st.metric(label="Zona classificação atual", value=self.nps_dict['zona'])
+                        with cols[2]:
+                            st.write(f'**Cálculo NPS**\n\nPromotores = **{self.nps_dict["promotores"]}** *({self.nps_dict["p_promotores"]})*\n\nNeutros = **{self.nps_dict["neutros"]}** *({self.nps_dict["p_neutros"]})*\n\n Detratores = **{self.nps_dict["detratores"]}** *({self.nps_dict["p_detratores"]})*\n\n {self.nps_dict["p_promotores"]} - {self.nps_dict["p_detratores"]} = **{self.nps_dict["score"]}**')
+                        # st.write(self.nps_dict)
+                        
+
+        
+
+def clean_data():
+    # TODO : Função para ser executada somente durando o desenvolvimento
+    if os.path.exists('data'):
+        os.system('rm -rf data')
+
+def main():
+    data_processor = DataProcessor()
+    dashboard = Dashboard(data_processor)
+    
+    dashboard.set_layout()
+    dashboard.render_dashboard()
+
+if __name__ == "__main__":
+    log.info("\n\n[red]" + "="*60 + "\n\n" + "[red underline]INICIALIZANDO DASHBOARD[/]\n\n" + "[red]" + "="*60 + "\n")
+    clean_data()
+    main()

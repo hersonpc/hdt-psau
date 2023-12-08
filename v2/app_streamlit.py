@@ -1,3 +1,12 @@
+## Dashboard PSAU v2
+## Autor.: Herson Melo
+## Fonte......: https://docs.google.com/spreadsheets/d/e/2PACX-1vQnAgS3VcuLGyS6sLSCVo8d-_fT2E-X4L1rEYm6iRF8uYxkqfiIPaAgRtriSySK-lbH07fBysH92x9d/pub?gid=25369857&single=true&output=csv
+## Formulario.: https://docs.google.com/forms/d/e/1FAIpQLSf5aE3ymUu7xF64N18XI0Iv-MNtxj3Avw909N5wvs-XVZzJTw/viewform
+## QRCode.....: https://feedback.isgsaude.org/psau/hdt
+##
+## Publicado..: https://hdt-psau.hersonpc.com/
+##
+
 import os
 import time
 import json
@@ -292,8 +301,13 @@ class Dashboard:
     def load_data(self):
         self.df = self.data_processor.get_data()
     
-    def load_nps_data(self):
-        self.nps_dict = self.calculate_nps(self.df)
+    def load_nps_data(self, periodo):
+        df_filtrado = (
+            self.df
+            .copy()
+            .query('periodo == @periodo')
+        )
+        self.nps_dict = self.calculate_nps(df_filtrado)
 
     def calculate_nps(self, df):
         # Restante do código de cálculo do NPS
@@ -341,13 +355,15 @@ class Dashboard:
         lista_periodos = self.df['periodo'].unique()
         return lista_periodos
 
-    def get_lista_setores(self):
-        if self.df is None or self.df.empty:
+    def get_lista_setores(self, df = None):
+        if df is None:
+            df = self.df
+        if df is None or df.empty:
             return []
-        if 'setor' not in self.df.columns:
+        if 'setor' not in df.columns:
             st.error('Estrutura de dados inválida.')
             return []
-        lista_periodos = self.df['setor'].unique()
+        lista_periodos = df['setor'].unique()
         return lista_periodos
 
     def render_dashboard(self):
@@ -358,7 +374,6 @@ class Dashboard:
         
         with st.spinner('Processando dados...'):
             self.load_data()
-            self.load_nps_data()
             
             if self.df is None:
                 st.error('Falha ao carregar dados. Tente novamente mais tarde ou procure apoio do departamento de TI.')
@@ -370,6 +385,9 @@ class Dashboard:
                 # input_visualizacao = st.sidebar.radio("Perspectiva de Visualização", ["Institucional", "Setorial"], index=0)
                 input_periodo = st.sidebar.selectbox("Qual período você deseja consultar?", self.get_lista_periodos())
                 # input_setor = st.sidebar.multiselect("Setor informado pelo usuário", self.get_lista_setores(), default=self.get_lista_setores())
+            
+            # calcular o NPS do período selecionado
+            self.load_nps_data(periodo=input_periodo)
             
             # filtrando os dados
             df_filtrado = (
@@ -468,6 +486,7 @@ class Dashboard:
                             # paper_bgcolor="LightSteelBlue",
                         )
                         st.plotly_chart(fig, use_container_width=True)
+                        
 
                     with tabs[1]:                        
                         st.markdown('##### Registros das manifestações dos usuários')
@@ -512,7 +531,7 @@ class Dashboard:
                         )
                         st.plotly_chart(fig, use_container_width=True)
                         
-                        lista_setores = sorted(list(self.get_lista_setores()))
+                        lista_setores = sorted(list(self.get_lista_setores(df_filtrado)))
                         tabs_setores = st.tabs(lista_setores)
                         for index, setor in enumerate(tabs_setores):
                             nome_setor = lista_setores[index]

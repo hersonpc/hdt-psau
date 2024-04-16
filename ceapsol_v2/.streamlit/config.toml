@@ -1,0 +1,16 @@
+[server]
+runOnSave = true
+port = 8632
+enableCORS = true
+#enableXsrfProtection = true
+#maxUploadSize = 50
+#fileWatcherType = none
+headless = true
+
+[browser]
+serverAddress = "0.0.0.0"
+serverPort = 8632
+gatherUsageStats = false
+
+[theme]
+base="light"

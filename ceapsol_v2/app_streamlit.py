@@ -1,10 +1,11 @@
-## Dashboard PSAU v2
+## Dashboard PSAU CEAPSOL v2
 ## Autor.: Herson Melo
-## Fonte......: https://docs.google.com/spreadsheets/d/e/2PACX-1vQnAgS3VcuLGyS6sLSCVo8d-_fT2E-X4L1rEYm6iRF8uYxkqfiIPaAgRtriSySK-lbH07fBysH92x9d/pub?gid=25369857&single=true&output=csv
-## Formulario.: https://docs.google.com/forms/d/e/1FAIpQLSf5aE3ymUu7xF64N18XI0Iv-MNtxj3Avw909N5wvs-XVZzJTw/viewform
-## QRCode.....: https://feedback.isgsaude.org/psau/hdt
+## Date.......: 2024-04-16
+## Fonte......: !TROCAR
+## Formulario.: https://docs.google.com/forms/d/e/1FAIpQLScE1q_3qImloxU4V5qfEvNBW_iPytjbzHIYYY_v6WNQ7Kzd-g/viewform
+## QRCode.....: !TROCAR https://feedback.isgsaude.org/psau/hdt
 ##
-## Publicado..: https://hdt-psau.hersonpc.com/
+## Publicado..: https://psau.ceapsol.org.br/
 ##
 
 import os
@@ -56,10 +57,10 @@ class DataProcessor:
         self.clean_nps_data_filename = 'data/clena_nps.parquet'
         self.url_raw_data = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQnAgS3VcuLGyS6sLSCVo8d-_fT2E-X4L1rEYm6iRF8uYxkqfiIPaAgRtriSySK-lbH07fBysH92x9d/pub?gid=25369857&single=true&output=csv'
         self.ttl_tempo_cache = 1 * 60 * 60 # 1 hora
-        
+
         self.df = None
         self.df_periodos = None
-        
+
         # garantir que a pasta data exista
         if not os.path.exists('data'):
             os.makedirs('data')
@@ -74,13 +75,13 @@ class DataProcessor:
             df = None
             response = None
             error = None
-            
+
             response = requests.get(url, headers=headers)
             if response and response.status_code == 200:
                 log.debug("<ETL> [dim]Download realizado com sucesso")
                 try:
                     df = pd.read_csv(BytesIO(response.content), sep=',')
-                    
+
                     log.debug("<ETL> [dim]Armazenando dados brutos[/]")
                     df.to_csv(self.raw_data_filename, index=False)
                 except Exception as e:
@@ -121,9 +122,9 @@ class DataProcessor:
             # converter data para o tipo datetime
             df['data'] = pd.to_datetime(df['data'], format='%d/%m/%Y %H:%M:%S')
             df['dia'] = df['data'].dt.date
-            
+
             df['setor'] = df['setor'].str.strip().str.upper()
-            
+
             # df['com_opiniao'] = np.where(df['elogio'].notna() | df['sugestao'].notna() | df['reclamacao'].notna(), 1, 0)
             # df['sem_opiniao'] = np.where(df['elogio'].isna() & df['sugestao'].isna() & df['reclamacao'].isna(), 1, 0)
 
@@ -131,23 +132,23 @@ class DataProcessor:
             df['ano'] = df['data'].dt.year
             df['mes'] = df['data'].dt.month
             df['periodo'] = df['data'].dt.strftime('%Y/%m')
-            
+
             # deferminar a tipificação da manifestação
             df['tipo'] = np.where(df['elogio'].notna(), 'elogio', np.where(df['sugestao'].notna(), 'sugestao', np.where(df['reclamacao'].notna(), 'reclamacao', 'preferiu nao informar')))
             df['manifestacao'] = np.where(df['elogio'].notna(), df['elogio'], np.where(df['sugestao'].notna(), df['sugestao'], np.where(df['reclamacao'].notna(), df['reclamacao'], '-')))
-            
+
             # classificar a nota do nps
             df['classe'] = np.where(df['nps'] >= 9, 'promotor', np.where(df['nps'] >= 7, 'neutro', 'detrator'))
-            
+
             df['nome'] = df['nome'].str.strip().str.title()
             df['email'] = df['email'].str.strip().str.lower()
             # remover todos caracteres não numéricos do campo telefone
             df['telefone'] = df['telefone'].str.replace(r'\D', '', regex=True)
-            
-            
+
+
             # criar o campo 'flag' com bolinha verde se a classificação for 'promotor', azul se for 'neutro' e vermelha se for 'detrator'
             df['flag'] = np.where(df['classe'] == 'promotor', '🟢', np.where(df['classe'] == 'neutro', '🔵', '🔴'))
-            
+
             # alterar a ordem da coluna classe para ficar na 3a posição
             df = df[[
                 'periodo', 'dia',
@@ -161,10 +162,10 @@ class DataProcessor:
 
             # index começando em 1
             df.index = np.arange(1, len(df) + 1)
-            
+
             # ordenar inversamente por data
             df = df.sort_values(by=['data'], ascending=False)
-            
+
             # estabelendo o valor padrão para os campos vazios
             df = df.fillna('-')
 
@@ -175,7 +176,7 @@ class DataProcessor:
             log.error(f'<ETL> [yellow]ERROR ETL:[/] [red]{e}[/]')
             st.error('Falha ao processar a preparação dos dados. Tente novamente mais tarde ou procure apoio do departamento de TI.')
             return None
-        
+
         return df
 
     def process_statistics(self, df):
@@ -191,7 +192,7 @@ class DataProcessor:
             )
             # print(df_temp)
             # self.df_temp.info()
-            
+
             log.debug("<ETL> [dim]Pivotando dados estatísticos...")
             df_pivot = (
                 df_temp.pivot(
@@ -200,9 +201,10 @@ class DataProcessor:
                     values='n'
                 )
                 .reset_index()
-            )            
+            )
+
             df_pivot['total'] = df_pivot[['elogio', 'sugestao', 'reclamacao', 'preferiu nao informar']].sum(axis=1)
-            
+
             # calcular o total amostras em cada período
             df_totais_periodos = (
                 df_pivot.groupby(['periodo'])
@@ -213,11 +215,11 @@ class DataProcessor:
             df_totais_periodos['n_periodo'] = df_totais_periodos['n_periodo'].astype(int)
             # log.debug("<ETL> [red]Totalização por período ==============================")
             # print(df_totais_periodos)
-            
+
             for campo in ['elogio', 'sugestao', 'reclamacao', 'preferiu nao informar', 'total']:
                 if campo in df_pivot.columns:
                     df_pivot[campo] = df_pivot[campo].fillna(0).astype(int)
-                    
+
             df_pivot = (
                 df_pivot.sort_values(by=['periodo', 'setor'], ascending=True)
             )[['periodo', 'setor', 'elogio', 'sugestao', 'reclamacao', 'preferiu nao informar', 'total']]
@@ -233,21 +235,21 @@ class DataProcessor:
 
             # index começando em 1
             df_pivot.index = np.arange(1, len(df_pivot) + 1)
-            
+
             log.debug("<ETL> [yellow]Analítico por período ==============================")
             print(df_pivot)
 
             self.df_periodos = df_pivot
-            
+
             if self.df_periodos is not None:
                 self.df_periodos.to_parquet(self.clean_data_periodos_filename, index=False)
                 log.debug("<ETL> [green dim]Estatísticas processadas com sucesso!")
         except Exception as e:
             log.error(f'<ETL> [yellow]ERROR ETL STATISTICS:[/] [red]{e}[/]')
             st.error('Falha ao processar as estatísticas. Tente novamente mais tarde ou procure apoio do departamento de TI.')
-        
+
         return self.df_periodos
-    
+
     def get_data(self):
         log.debug("[dim]Getting data")
         if os.path.exists(self.clean_data_filename):
@@ -266,20 +268,20 @@ class DataProcessor:
             log.debug("<ETL> [green]ETL concluido com sucesso!")
 
         return df
-    
+
     def get_data_by_periodos(self):
         return self.df_periodos
-    
+
 class Dashboard:
     def __init__(self, data_processor):
         self.data_processor = data_processor
         self.df = None
         self.nps_dict = {}
-        
+
     def set_layout(self):
         """Configurando o layout do dashboard no Streamlit"""
         st.set_page_config(
-            page_title="HDT PSAU v2",
+            page_title="CEAP-SOL PSAU v2",
             page_icon=':hospital:',
             layout="wide",
             # layout="centered",
@@ -302,7 +304,7 @@ class Dashboard:
 
     def load_data(self):
         self.df = self.data_processor.get_data()
-    
+
     def load_nps_data(self, periodo):
         df_filtrado = (
             self.df
@@ -316,15 +318,15 @@ class Dashboard:
         detratores = df[df['classe'] == 'detrator']['nps'].count()
         neutros = df[df['classe'] == 'neutro']['nps'].count()
         promotores = df[df['classe'] == 'promotor']['nps'].count()
-        
+
         qtde_total = detratores + neutros + promotores
-        
+
         p_detratores = detratores / qtde_total
         p_neutros = neutros / qtde_total
         p_promotores = promotores / qtde_total
-        
+
         score_nps = round((p_promotores - p_detratores) * 100, 2)
-        
+
         # zonas de classificação
         if score_nps < 0:
             zona = 'Crítica'
@@ -334,7 +336,7 @@ class Dashboard:
             zona = 'Qualidade'
         else:
             zona = 'Excelência'
-        
+
         nps_dict = {
             'detratores': detratores,
             'p_detratores': f'{p_detratores:.2%}',
@@ -371,12 +373,12 @@ class Dashboard:
     def render_dashboard(self):
         # st.title('Dashboard - PSAU')
         st.header('Dashboard - Pesquisa de Satisfação dos Usuários')
-        st.markdown(f'<h4 style="color: #6880c7;">Hospital Estadual de Doenças Tropicais</h4>', unsafe_allow_html=True)
+        st.markdown(f'<h4 style="color: #6880c7;">Centro Estadual de Atenção Prolongada e Casa de Apoio Condomínio Solidariedade</h4>', unsafe_allow_html=True)
         main_container = st.empty()
-        
+
         with st.spinner('Processando dados...'):
             self.load_data()
-            
+
             if self.df is None:
                 st.error('Falha ao carregar dados. Tente novamente mais tarde ou procure apoio do departamento de TI.')
                 st.stop()
@@ -388,11 +390,11 @@ class Dashboard:
                 input_periodo = st.sidebar.selectbox("Qual período você deseja consultar?", self.get_lista_periodos())
                 # input_setor = st.sidebar.multiselect("Setor informado pelo usuário", self.get_lista_setores(), default=self.get_lista_setores())
 
-            st.sidebar.markdown('<br><br><a href="https://docs.google.com/forms/d/e/1FAIpQLSf5aE3ymUu7xF64N18XI0Iv-MNtxj3Avw909N5wvs-XVZzJTw/viewform" target="_blank">Abrir formulário</a>', unsafe_allow_html=True)
-            
+            st.sidebar.markdown('<br><br><a href="https://docs.google.com/forms/d/e/1FAIpQLScE1q_3qImloxU4V5qfEvNBW_iPytjbzHIYYY_v6WNQ7Kzd-g/viewform" target="_blank">Abrir formulário</a>', unsafe_allow_html=True)
+
             # calcular o NPS do período selecionado
             self.load_nps_data(periodo=input_periodo)
-            
+
             # filtrando os dados
             df_filtrado = (
                 self.df
@@ -400,14 +402,14 @@ class Dashboard:
                 .query('periodo == @input_periodo')
             ).drop(columns=['dia', 'periodo', 'ano', 'mes'])
             df_filtrado['data'] = df_filtrado['data'].dt.strftime('%d/%m/%Y %H:%M:%S')
-            
+
             df_estatisticas_filtrado = (
                 self.data_processor.get_data_by_periodos()
                 .copy()
                 .query('periodo == @input_periodo')
             ).drop(columns=['periodo', 'n_periodo'])
             df_estatisticas_filtrado['proporcao'] = df_estatisticas_filtrado['proporcao'].apply(lambda x: f'{x:.2%}')
-            
+
             df_manifestacoes_por_dia = (
                 self.df
                 .copy()
@@ -426,7 +428,7 @@ class Dashboard:
                 .rename(columns={'setor': 'n'})
                 .reset_index()
             )
-            
+
             with main_container:
                 with st.container():
                     st.markdown(f'<br><h5>Período de análise <b style="color: firebrick">{input_periodo}</b></h5>', unsafe_allow_html=True)
@@ -444,7 +446,7 @@ class Dashboard:
                             st.metric(label="Reclamações", value=df_estatisticas_filtrado['reclamacao'].sum())
                         with cols[4]:
                             st.metric(label="Preferiu não informar", value=df_estatisticas_filtrado['preferiu nao informar'].sum())
-                        
+
                         df_apresentacao = (
                             df_estatisticas_filtrado.rename({
                                 "preferiu nao informar": "não informou",
@@ -458,7 +460,7 @@ class Dashboard:
                         df_apresentacao.index = np.arange(1, len(df_apresentacao) + 1)
                         st.table(df_apresentacao)
                         # st.markdown(f'<small>Quantidade de registros: {len(df_apresentacao)}</small>', unsafe_allow_html=True)
-                        
+
                         st.markdown('##### Volume de manifestações recebidas por dia')
                         # # grafico de scatter plot do df_manifestacoes_por_dia
                         # fig = px.scatter(
@@ -481,7 +483,7 @@ class Dashboard:
                         #     # paper_bgcolor="LightSteelBlue",
                         # )
                         # st.plotly_chart(fig, use_container_width=True)
-                        
+
                         # criar um grafico de barras com o total de manifestações por dia
                         fig = px.bar(
                             df_manifestacoes_por_dia,
@@ -501,9 +503,9 @@ class Dashboard:
                             # paper_bgcolor="LightSteelBlue",
                         )
                         st.plotly_chart(fig, use_container_width=True)
-                        
 
-                    with tabs[1]:                        
+
+                    with tabs[1]:
                         st.markdown('##### Registros das manifestações dos usuários')
                         tabs_manifestacoes = st.tabs(["Todos", "Elogios", "Sugestões", "Reclamações", "Preferiu não informar"])
                         with tabs_manifestacoes[0]:
@@ -521,7 +523,7 @@ class Dashboard:
                         with tabs_manifestacoes[4]:
                             st.table(df_filtrado[df_filtrado['tipo'] == 'preferiu nao informar'].drop(['tipo'], axis=1).replace(0, '-'))
                             st.markdown(f'<small>Quantidade de registros: {len(df_filtrado[df_filtrado["tipo"] == "preferiu nao informar"])}</small>', unsafe_allow_html=True)
-                            
+
                     with tabs[2]:
                         # st.markdown('#### Manifestações x Setores')
                         # input_setor = st.selectbox("Qual setor você deseja consultar?", self.get_lista_setores())
@@ -545,7 +547,7 @@ class Dashboard:
                             margin=dict(l=0, r=0, t=50, b=0),
                         )
                         st.plotly_chart(fig, use_container_width=True)
-                        
+
                         lista_setores = sorted(list(self.get_lista_setores(df_filtrado)))
                         tabs_setores = st.tabs(lista_setores)
                         for index, setor in enumerate(tabs_setores):
@@ -564,7 +566,7 @@ class Dashboard:
                         #     with tabs_setores[df_estatisticas_filtrado['setor'].unique().tolist().index(setor)]:
                         #         st.table(df_estatisticas_filtrado[df_estatisticas_filtrado['setor'] == setor].replace(0, '-'))
                         #         st.markdown(f'<small>Quantidade de registros: {len(df_estatisticas_filtrado[df_estatisticas_filtrado["setor"] == setor])}</small>', unsafe_allow_html=True)
-                        
+
                     with tabs[3]:
                         st.markdown('##### Net Promoter Score')
                         cols = st.columns([3,1])
@@ -574,21 +576,6 @@ class Dashboard:
                         with cols[1]:
                             st.write(f'**Cálculo NPS**\n\nPromotores = **{self.nps_dict["promotores"]}** *({self.nps_dict["p_promotores"]})*\n\nNeutros = **{self.nps_dict["neutros"]}** *({self.nps_dict["p_neutros"]})*\n\n Detratores = **{self.nps_dict["detratores"]}** *({self.nps_dict["p_detratores"]})*\n\n {self.nps_dict["p_promotores"]} - {self.nps_dict["p_detratores"]} = **{self.nps_dict["score"]}**')
                         # st.write(self.nps_dict)
-                        
-
-#def job_update_data():
-#    log.debug("<JOB> [dim]Atualizando dados...")
-
-#def run_jobs():
-#    j = schedule.every(120).seconds.do(job_update_data)
-#    while True:
-#        schedule.run_pending()
-#        time.sleep(1)
-
-# Criar uma thread deamon para atualizar os dados
-#log.info('Starting deamon thread to update data...')
-#t = threading.Thread(target=run_jobs, daemon=True)
-#t.start()
 
 
 def clean_data():
@@ -599,7 +586,7 @@ def clean_data():
 def main():
     data_processor = DataProcessor()
     dashboard = Dashboard(data_processor)
-    
+
     dashboard.set_layout()
     dashboard.render_dashboard()
 

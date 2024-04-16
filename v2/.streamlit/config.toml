@@ -5,7 +5,7 @@ enableCORS = true
 #enableXsrfProtection = true
 #maxUploadSize = 50
 #fileWatcherType = none
-headless = false
+headless = true
 
 [browser]
 serverAddress = "0.0.0.0"
